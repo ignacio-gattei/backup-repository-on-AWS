@@ -1,4 +1,4 @@
-# {{PROJECT_NAME}}
+# mini-google-drive-in-AWS
 
 Proyecto integrador del módulo Cloud Computing (ITBA).
 
