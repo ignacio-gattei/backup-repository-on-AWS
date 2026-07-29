@@ -1,4 +1,4 @@
-# mini-google-drive-in-AWS
+# backup-repository-on-AWS
 
 Proyecto integrador del módulo Cloud Computing (ITBA).
 
