@@ -10,14 +10,16 @@ Uso:
 
 
 
+import sys
 from typing import Any, Dict
 import boto3
 from botocore.exceptions import ClientError
 from pathlib import Path
+from load_S3 import *
 
 ENDPOINT = "http://localhost:4566"
 REGION = "us-east-1"
-BUCKET = "course-data-raw"
+BUCKET = "file-repo"
 IAM_DIR = Path(__file__).parent.parent / "iam"
 
 BOTO_KWARGS = dict(
@@ -46,18 +48,15 @@ def make_client(service: str):
     return boto3.client(service, **BOTO_KWARGS)
 
 
-def ensure_bucket(s3):
-    try:
-        s3.head_bucket(Bucket=BUCKET)
-        print(f"  bucket '{BUCKET}' ya existe")
-    except ClientError:
-        s3.create_bucket(Bucket=BUCKET)
-        s3.put_object(Bucket=BUCKET, Key="sample/hello.txt", Body=b"hello from lab-04")
-        print(f"  bucket '{BUCKET}' creado con objeto de ejemplo")
+def _normalize_policy_sources(policy_sources):
+    if policy_sources is None:
+        return []
+    if isinstance(policy_sources, (str, Path)):
+        return [policy_sources]
+    return list(policy_sources)
 
 
-def create_group_with_policies(iam):
-    group = "bigdata-read"
+def create_group(iam, group: str ):
     try:
         iam.create_group(GroupName=group)
         print(f"  grupo '{group}' creado")
@@ -66,32 +65,50 @@ def create_group_with_policies(iam):
             print(f"  grupo '{group}' ya existe")
         else:
             raise
+    return group
 
-    # política administrada — read-only sobre S3 (equivalente a AmazonS3ReadOnlyAccess)
-    policy_doc = (IAM_DIR / "s3_read_policy.json").read_text()
-    try:
-        resp = iam.create_policy(
-            PolicyName="S3ReadOnlyLab",
-            PolicyDocument=policy_doc,
-            Description="Lectura sobre course-data-raw — lab 04",
-        )
-        policy_arn = resp["Policy"]["Arn"]
-        print(f"  policy 'S3ReadOnlyLab' creada: {policy_arn}")
-    except ClientError as e:
-        if _already_exists(e):
-            account_id = iam.get_user()["User"]["Arn"].split(":")[4]
-            policy_arn = f"arn:aws:iam::{account_id}:policy/S3ReadOnlyLab"
-            print(f"  policy 'S3ReadOnlyLab' ya existe: {policy_arn}")
+
+def attach_policies_to_group(iam, group: str, policy_sources) -> list:
+    """Attach policies to a group.
+
+    `policy_sources` puede contener ARNs (strings que empiezan con 'arn:')
+    o paths a archivos JSON relativos a `IAM_DIR`.
+    Devuelve la lista de policy ARNs adjuntadas.
+    """
+    attached_arns = []
+    for src in _normalize_policy_sources(policy_sources):
+        if isinstance(src, str) and src.startswith("arn:"):
+            policy_arn = src
+            print(f"  usando policy ARN existente: {policy_arn}")
         else:
-            raise
+            path = Path(src) if not isinstance(src, Path) else src
+            if not path.is_absolute():
+                path = IAM_DIR / path
+            policy_doc = path.read_text()
+            policy_name = f"{path.stem}"
+            try:
+                resp = iam.create_policy(
+                    PolicyName=policy_name,
+                    PolicyDocument=policy_doc,
+                    Description=f"Policy from {path.name}",
+                )
+                policy_arn = resp["Policy"]["Arn"]
+                print(f"  policy '{policy_name}' creada: {policy_arn}")
+            except ClientError as e:
+                if _already_exists(e):
+                    account_id = iam.get_user()["User"]["Arn"].split(":")[4]
+                    policy_arn = f"arn:aws:iam::{account_id}:policy/{policy_name}"
+                    print(f"  policy '{policy_name}' ya existe: {policy_arn}")
+                else:
+                    raise
+        iam.attach_group_policy(GroupName=group, PolicyArn=policy_arn)
+        print(f"  policy adjuntada al grupo '{group}': {policy_arn}")
+        attached_arns.append(policy_arn)
+    return attached_arns
 
-    iam.attach_group_policy(GroupName=group, PolicyArn=policy_arn)
-    print(f"  policy adjuntada al grupo '{group}'")
-    return group, policy_arn
 
-
-def create_user(iam, group: str):
-    username = "lab-user"
+def create_user(iam,username, group: str):
+  
     try:
         iam.create_user(UserName=username)
         print(f"  usuario '{username}' creado")
@@ -107,7 +124,7 @@ def create_user(iam, group: str):
     # access key (equivalente a "llave de larga duración" — lo que queremos evitar en prod)
     try:
         key = iam.create_access_key(UserName=username)["AccessKey"]
-        print(f"  access key creada: {key['AccessKeyId']} (larga duración — evitar en prod)")
+        print(f"  access key creada: {key['AccessKeyId']} (larga duración)")
     except ClientError as e:
         if "LimitExceeded" in str(e):
             print("  access key ya existe para este usuario")
@@ -117,16 +134,23 @@ def create_user(iam, group: str):
     return username
 
 
-def create_role(iam):
-    role_name = "app-role"
-    trust_policy = (IAM_DIR / "trust_policy.json").read_text()
-    inline_policy = (IAM_DIR / "s3_read_policy.json").read_text()
+def create_role(
+    iam,
+    role_name: str = "app-role",
+    trust_policy_path: str | Path = "trust_policy.json",
+    inline_policy_sources: list | None = None,
+    attached_policy_sources: list | None = None,
+):
+    trust_policy_path = Path(trust_policy_path) if not isinstance(trust_policy_path, Path) else trust_policy_path
+    if not trust_policy_path.is_absolute():
+        trust_policy_path = IAM_DIR / trust_policy_path
+    trust_policy = trust_policy_path.read_text()
 
     try:
         iam.create_role(
             RoleName=role_name,
             AssumeRolePolicyDocument=trust_policy,
-            Description="Rol asumible por EC2 con acceso mínimo a S3 — lab 04",
+            Description="Rol asumible por EC2 con acceso mínimo",
         )
         print(f"  rol '{role_name}' creado")
     except ClientError as e:
@@ -135,12 +159,46 @@ def create_role(iam):
         else:
             raise
 
-    iam.put_role_policy(
-        RoleName=role_name,
-        PolicyName="InlineS3Read",
-        PolicyDocument=inline_policy,
-    )
-    print(f"  inline policy 'InlineS3Read' adjuntada al rol '{role_name}'")
+    for src in _normalize_policy_sources(inline_policy_sources):
+        path = Path(src) if not isinstance(src, Path) else src
+        if not path.is_absolute():
+            path = IAM_DIR / path
+        policy_doc = path.read_text()
+        policy_name = path.stem
+        iam.put_role_policy(
+            RoleName=role_name,
+            PolicyName=policy_name,
+            PolicyDocument=policy_doc,
+        )
+        print(f"  inline policy '{policy_name}' adjuntada al rol '{role_name}'")
+
+    for src in _normalize_policy_sources(attached_policy_sources):
+        if isinstance(src, str) and src.startswith("arn:"):
+            policy_arn = src
+            print(f"  usando policy ARN existente para el rol: {policy_arn}")
+        else:
+            path = Path(src) if not isinstance(src, Path) else src
+            if not path.is_absolute():
+                path = IAM_DIR / path
+            policy_doc = path.read_text()
+            policy_name = path.stem
+            try:
+                resp = iam.create_policy(
+                    PolicyName=policy_name,
+                    PolicyDocument=policy_doc,
+                    Description=f"Policy from {path.name}",
+                )
+                policy_arn = resp["Policy"]["Arn"]
+                print(f"  policy gestionada '{policy_name}' creada: {policy_arn}")
+            except ClientError as e:
+                if _already_exists(e):
+                    account_id = iam.get_user()["User"]["Arn"].split(":")[4]
+                    policy_arn = f"arn:aws:iam::{account_id}:policy/{policy_name}"
+                    print(f"  policy gestionada '{policy_name}' ya existe: {policy_arn}")
+                else:
+                    raise
+        iam.attach_role_policy(RoleName=role_name, PolicyArn=policy_arn)
+        print(f"  policy adjuntada al rol '{role_name}': {policy_arn}")
 
     role_arn = iam.get_role(RoleName=role_name)["Role"]["Arn"]
     return role_name, role_arn
@@ -259,6 +317,106 @@ def inspect_policies(iam):
             print(f"  S3-related: {policy_has_s3(doc)}")
 
 
+def cleanup_resources(iam, s3, bucket: str = BUCKET):
+    """Delete the IAM resources and S3 bucket created by this demo."""
+    print("\n=== Cleanup de recursos ===")
+
+    # S3 cleanup
+    try:
+        objects = s3.list_objects_v2(Bucket=bucket).get("Contents", [])
+        if objects:
+            s3.delete_objects(
+                Bucket=bucket,
+                Delete={"Objects": [{"Key": obj["Key"]} for obj in objects]},
+            )
+        versions = s3.list_object_versions(Bucket=bucket)
+        version_items = []
+        for item in versions.get("Versions", []):
+            version_items.append({"Key": item["Key"], "VersionId": item["VersionId"]})
+        for item in versions.get("DeleteMarkers", []):
+            version_items.append({"Key": item["Key"], "VersionId": item["VersionId"]})
+        if version_items:
+            s3.delete_objects(Bucket=bucket, Delete={"Objects": version_items})
+        s3.delete_bucket(Bucket=bucket)
+        print(f"  bucket '{bucket}' eliminado")
+    except ClientError as e:
+        if "NoSuchBucket" in str(e) or "NotFound" in str(e):
+            print(f"  bucket '{bucket}' ya no existe")
+        else:
+            print(f"  no se pudo eliminar el bucket '{bucket}': {e}")
+
+    # Remove users from groups and delete them
+    for user in iam.list_users().get("Users", []):
+        username = user["UserName"]
+        try:
+            for key in iam.list_access_keys(UserName=username).get("AccessKeyMetadata", []):
+                iam.delete_access_key(UserName=username, AccessKeyId=key["AccessKeyId"])
+        except ClientError:
+            pass
+        try:
+            for group in iam.list_groups_for_user(UserName=username).get("Groups", []):
+                iam.remove_user_from_group(GroupName=group["GroupName"], UserName=username)
+        except ClientError:
+            pass
+        try:
+            iam.delete_user(UserName=username)
+            print(f"  usuario '{username}' eliminado")
+        except ClientError as e:
+            if "NoSuchEntity" in str(e):
+                continue
+            print(f"  no se pudo eliminar el usuario '{username}': {e}")
+
+    # Delete groups and their policies
+    for group in iam.list_groups().get("Groups", []):
+        group_name = group["GroupName"]
+        try:
+            for policy in iam.list_attached_group_policies(GroupName=group_name).get("AttachedPolicies", []):
+                iam.detach_group_policy(GroupName=group_name, PolicyArn=policy["PolicyArn"])
+            for policy_name in iam.list_group_policies(GroupName=group_name).get("PolicyNames", []):
+                iam.delete_group_policy(GroupName=group_name, PolicyName=policy_name)
+            iam.delete_group(GroupName=group_name)
+            print(f"  grupo '{group_name}' eliminado")
+        except ClientError as e:
+            if "NoSuchEntity" in str(e):
+                continue
+            print(f"  no se pudo eliminar el grupo '{group_name}': {e}")
+
+    # Delete roles and their policies
+    for role in iam.list_roles().get("Roles", []):
+        role_name = role["RoleName"]
+        try:
+            for policy in iam.list_attached_role_policies(RoleName=role_name).get("AttachedPolicies", []):
+                iam.detach_role_policy(RoleName=role_name, PolicyArn=policy["PolicyArn"])
+            for policy_name in iam.list_role_policies(RoleName=role_name).get("PolicyNames", []):
+                iam.delete_role_policy(RoleName=role_name, PolicyName=policy_name)
+            iam.delete_role(RoleName=role_name)
+            print(f"  rol '{role_name}' eliminado")
+        except ClientError as e:
+            if "NoSuchEntity" in str(e):
+                continue
+            print(f"  no se pudo eliminar el rol '{role_name}': {e}")
+
+    # Delete local managed policies
+    for policy in iam.list_policies(Scope="Local").get("Policies", []):
+        policy_arn = policy["Arn"]
+        try:
+            entities = iam.list_entities_for_policy(PolicyArn=policy_arn)
+            for group in entities.get("PolicyGroups", []):
+                iam.detach_group_policy(GroupName=group["GroupName"], PolicyArn=policy_arn)
+            for role in entities.get("PolicyRoles", []):
+                iam.detach_role_policy(RoleName=role["RoleName"], PolicyArn=policy_arn)
+            for user in entities.get("PolicyUsers", []):
+                iam.detach_user_policy(UserName=user["UserName"], PolicyArn=policy_arn)
+            iam.delete_policy(PolicyArn=policy_arn)
+            print(f"  policy '{policy['PolicyName']}' eliminada")
+        except ClientError as e:
+            if "NoSuchEntity" in str(e) or "DeleteConflict" in str(e):
+                continue
+            print(f"  no se pudo eliminar la policy '{policy['PolicyName']}': {e}")
+
+    print("=== Cleanup finalizado ===")
+
+
 # ── main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -268,28 +426,46 @@ def main():
     s3 = make_client("s3")
     sts = make_client("sts")
 
+    cleanup_resources(iam, s3)
+
+
     print("1. Bucket S3")
-    ensure_bucket(s3)
+    create_bucket(s3)
 
-    print("\n2. Grupo + policy administrada")
-    group, policy_arn = create_group_with_policies(iam)
+    print("\n2. Grupo + policies")
 
-    print("\n3. Usuario → grupo")
-    username = create_user(iam, group)
+    # Perfil: Administradores Cloud
+    group_infra_admins = create_group(iam,"group_infra_admins")
+    policy_arns = attach_policies_to_group(iam, group_infra_admins, [IAM_DIR / "s3_admin_policy.json"])
+    policy_arns = attach_policies_to_group(iam, group_infra_admins, [IAM_DIR / "ec2_full_access_policy.json"])
+    user_pedro = create_user(iam,"pedro_admin" , group_infra_admins)
 
-    print("\n4. Rol con trust policy (EC2) + inline policy mínima")
-    role_name, role_arn = create_role(iam)
+
+    # Perfil: Desarrolladores de app
+    group_dev_apps = create_group(iam,"group_devs_app")
+    policy_arns = attach_policies_to_group(iam, group_dev_apps, [IAM_DIR / "s3_read_policy.json"])
+    policy_arns = attach_policies_to_group(iam, group_dev_apps, [IAM_DIR / "ec2_full_access_policy.json"])
+    user_nacho = create_user(iam,"nacho_dev" , group_dev_apps)
+    user_mariano = create_user(iam,"mariano_dev" , group_dev_apps)
+
+
+    # Perfil: Server app y S3
+
+
+    print("\n4. Rol con trust policy (EC2) + policies adjuntas")
+    role_name, role_arn = create_role(
+        iam,
+        role_name="app-role",
+        trust_policy_path="trust_policy.json",
+        attached_policy_sources=[IAM_DIR / "s3_read_policy.json",
+                                 IAM_DIR / "s3_write_policy.json"],
+    )
 
     print("\n5. AssumeRole vía STS → credenciales temporales")
     creds = assume_role_and_use_s3(sts, role_arn)
 
     print("\n=== Resumen de recursos creados ===")
-    print(f"  Bucket:  {BUCKET}")
-    print(f"  Grupo:   {group}")
-    print(f"  Policy:  {policy_arn}")
-    print(f"  Usuario: {username}")
-    print(f"  Rol:     {role_arn}")
-    print("\nListo. Revisá los JSON en iam/ para entender cada documento.")
+
 
     inspect_groups(iam)
     inspect_roles(iam)

@@ -10,7 +10,7 @@
         "s3:DeleteObject",
         "s3:GetObjectVersion"
       ],
-      "Resource": "arn:aws:s3:::course-data-raw/*"
+      "Resource": "arn:aws:s3:::file-repo/*"
     },
     {
       "Sid": "S3BucketManagement",
@@ -19,7 +19,7 @@
         "s3:ListBucket",
         "s3:GetBucketLocation"
       ],
-      "Resource": "arn:aws:s3:::course-data-raw"
+      "Resource": "arn:aws:s3:::file-repo"
     }
   ]
 }

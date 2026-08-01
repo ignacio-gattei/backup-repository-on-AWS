@@ -2,19 +2,19 @@
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "LeastPrivilegeS3Read",
+      "Sid": "S3ReadFiles",
       "Effect": "Allow",
       "Action": [
         "s3:GetObject",
         "s3:GetObjectVersion"
       ],
-      "Resource": "arn:aws:s3:::course-data-raw/*"
+      "Resource": "arn:aws:s3:::file-repo/*"
     },
     {
       "Sid": "AllowListBucket",
       "Effect": "Allow",
       "Action": "s3:ListBucket",
-      "Resource": "arn:aws:s3:::course-data-raw"
+      "Resource": "arn:aws:s3:::file-repo"
     }
   ]
 }

@@ -24,7 +24,7 @@ ROOT = Path(__file__).parent.parent
 DATA_DIR = ROOT / "data"
 S3_DIR = ROOT / "s3"
 
-BUCKET = "mini-drive-data-lake"
+BUCKET = "file-repo"
 ROLE_ARN = "arn:aws:iam::000000000000:role/app-role"
 
 BOTO_KWARGS = dict(
