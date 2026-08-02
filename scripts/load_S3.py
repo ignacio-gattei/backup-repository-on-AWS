@@ -14,12 +14,11 @@ Uso:
 """
 
 import json
-import boto3
 from botocore.exceptions import ClientError
 from pathlib import Path
+from aws_client import make_client
 
-ENDPOINT = "http://localhost:4566"
-REGION = "us-east-1"
+
 ROOT = Path(__file__).parent.parent
 DATA_DIR = ROOT / "data"
 S3_DIR = ROOT / "s3"
@@ -27,32 +26,12 @@ S3_DIR = ROOT / "s3"
 BUCKET = "file-repo"
 ROLE_ARN = "arn:aws:iam::000000000000:role/app-role"
 
-BOTO_KWARGS = dict(
-    endpoint_url=ENDPOINT,
-    region_name=REGION,
-    aws_access_key_id="test",
-    aws_secret_access_key="test",
-)
-
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _exists_error(e: ClientError) -> bool:
     code = e.response["Error"].get("Code", "")
     return code in ("BucketAlreadyOwnedByYou", "BucketAlreadyExists")
-
-
-def make_client(service: str, creds: dict = None):
-    if creds:
-        return boto3.client(
-            service,
-            endpoint_url=ENDPOINT,
-            region_name=REGION,
-            aws_access_key_id=creds["AccessKeyId"],
-            aws_secret_access_key=creds["SecretAccessKey"],
-            aws_session_token=creds["SessionToken"],
-        )
-    return boto3.client(service, **BOTO_KWARGS)
 
 
 # ── pasos ─────────────────────────────────────────────────────────────────────
@@ -179,7 +158,12 @@ def assume_role_and_download(sts):
     )["Credentials"]
     print(f"  creds temporales obtenidas (expiran: {creds['Expiration']})")
 
-    s3_assumed = make_client("s3", creds=creds)
+    s3_assumed = make_client(
+        "s3",
+        aws_access_key_id=creds["AccessKeyId"],
+        aws_secret_access_key=creds["SecretAccessKey"],
+        aws_session_token=creds["SessionToken"],
+    )
     key = "raw/olist/customers.csv"
     head = s3_assumed.head_object(Bucket=BUCKET, Key=key)
     print(f"  GetObject como app-role: '{key}' OK ({head['ContentLength']:,} bytes)")

@@ -1,33 +1,19 @@
 """
-Lab 04 — IAM demo: grupo, usuario, rol y credenciales temporales vía STS.
-
-Corre contra LocalStack Community (mecánica de IAM, sin enforcement real).
-Para enforcement real de Deny, usá LocalStack Pro o una cuenta AWS.
-
-Uso:
-    python scripts/iam_demo.py
+    
 """
 
 
 
 import sys
 from typing import Any, Dict
-import boto3
 from botocore.exceptions import ClientError
 from pathlib import Path
-from load_S3 import *
+from aws_client import make_client
+from load_S3 import create_bucket
 
-ENDPOINT = "http://localhost:4566"
-REGION = "us-east-1"
-BUCKET = "file-repo"
+
+BUCKET = "file-backup-repo"
 IAM_DIR = Path(__file__).parent.parent / "iam"
-
-BOTO_KWARGS = dict(
-    endpoint_url=ENDPOINT,
-    region_name=REGION,
-    aws_access_key_id="test",
-    aws_secret_access_key="test",
-)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -42,10 +28,6 @@ def _already_exists(e: ClientError) -> bool:
         or "already exists" in code.lower()
         or "duplicate" in code.lower()
     )
-
-
-def make_client(service: str):
-    return boto3.client(service, **BOTO_KWARGS)
 
 
 def _normalize_policy_sources(policy_sources):
@@ -216,10 +198,8 @@ def assume_role_and_use_s3(sts, role_arn: str):
     print(f"  Expiration:   {creds['Expiration']}  ← credencial temporal")
 
     # usar las credenciales temporales para acceder a S3
-    s3_temp = boto3.client(
+    s3_temp = make_client(
         "s3",
-        endpoint_url=ENDPOINT,
-        region_name=REGION,
         aws_access_key_id=creds["AccessKeyId"],
         aws_secret_access_key=creds["SecretAccessKey"],
         aws_session_token=creds["SessionToken"],

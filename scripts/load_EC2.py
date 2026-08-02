@@ -16,48 +16,21 @@ Uso:
 """
 
 import time
-import boto3
 from botocore.exceptions import ClientError
 from pathlib import Path
+from aws_client import make_client
 
-ENDPOINT = "http://localhost:4566"
-REGION = "us-east-1"
+
 ROOT = Path(__file__).parent.parent
 EC2_DIR = ROOT / "ec2"
 
-#Se usa para poder acceder de forma segura a la consola del servidor (Linux) desde tu terminal.
 KEY_NAME = "ec2-key"
-
-# SG_NAME: El nombre del grupo de seguridad. Funciona como el cortafuegos del 
-# servidor, definiendo qué puertos se abren (ej. el puerto 80 para la API REST).
-SG_NAME = "api-sg"
-
-# ROLE_NAME: El nombre del Rol de IAM creado previamente. Define el listado de 
-# permisos de AWS (como leer/escribir en S3) que se le otorgarán a la máquina.
-ROLE_NAME = "app-role"  # del lab-04
-
-# INSTANCE_PROFILE: El contenedor o "puente" que permite conectar físicamente 
-# el Rol de IAM (ROLE_NAME) con la instancia de EC2.
+SG_NAME = "SG-Api-Backup-Repository"
+ROLE_NAME = "app-role"  
 INSTANCE_PROFILE = "app-instance-profile"
-
-# INSTANCE_TAG: La etiqueta de identificación. Asigna un nombre visible en la 
-# consola de AWS para organizar tus servidores y no confundirlos entre proyectos.
-INSTANCE_TAG = "api-ec2"
-
-# AMI_ID: El identificador de la imagen del sistema operativo. En este caso indica 
-# que la máquina se creará usando una base limpia de 'Amazon Linux 2'.
-# AMI de Amazon Linux 2 (us-east-1) — en AWS real usá SSM Parameter Store.
-# En LocalStack Community es solo un identificador con formato válido.
+INSTANCE_TAG = "backup-repository-ec2-01"
 AMI_ID = "ami-0c02fb55956c7d316"
 INSTANCE_TYPE = "t3.micro"
-
-BOTO_KWARGS = dict(
-    endpoint_url=ENDPOINT,
-    region_name=REGION,
-    aws_access_key_id="test",
-    aws_secret_access_key="test",
-)
-
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -70,8 +43,28 @@ def _already_exists(e: ClientError) -> bool:
     )
 
 
-def make_client(service: str):
-    return boto3.client(service, **BOTO_KWARGS)
+def get_security_group_id(ec2, group_name: str) -> str:
+    """Devuelve el ID de un security group ya creado por load_VPC.py."""
+    try:
+        resp = ec2.describe_security_groups(GroupNames=[group_name])
+    except ClientError as e:
+        if "InvalidGroup.NotFound" not in str(e):
+            raise
+        all_groups = ec2.describe_security_groups().get("SecurityGroups", [])
+        available = ", ".join(g.get("GroupName", "?") for g in all_groups) or "ninguno"
+        raise RuntimeError(
+            f"No se encontró el security group '{group_name}'. Ejecutá primero python scripts/load_VPC.py. "
+        ) from e
+
+    groups = resp.get("SecurityGroups", [])
+    if not groups:
+        raise RuntimeError(
+            f"No se encontró el security group '{group_name}'. Ejecutá primero python scripts/load_VPC.py"
+        )
+
+    sg = groups[0]
+    print(f"  security group existente '{group_name}' encontrado: {sg['GroupId']}")
+    return sg["GroupId"]
 
 
 # ── pasos ─────────────────────────────────────────────────────────────────────
@@ -89,38 +82,7 @@ def create_key_pair(ec2):
             raise
 
 
-def create_security_group(ec2):
-    try:
-        resp = ec2.create_security_group(
-            GroupName=SG_NAME,
-            Description="Lab 05 — HTTP público, SSH restringido",
-        )
-        sg_id = resp["GroupId"]
-        print(f"  security group '{SG_NAME}' creado: {sg_id}")
-    except ClientError as e:
-        if _already_exists(e):
-            sg_id = ec2.describe_security_groups(GroupNames=[SG_NAME])["SecurityGroups"][0]["GroupId"]
-            print(f"  security group '{SG_NAME}' ya existe: {sg_id}")
-        else:
-            raise
 
-    # Reglas — idempotentes (ignoramos duplicados)
-    rules = [
-        {"IpProtocol": "tcp", "FromPort": 80, "ToPort": 80,
-         "IpRanges": [{"CidrIp": "0.0.0.0/0", "Description": "HTTP público"}]},
-        {"IpProtocol": "tcp", "FromPort": 22, "ToPort": 22,
-         "IpRanges": [{"CidrIp": "0.0.0.0/0", "Description": "SSH (en real, restringir a tu IP)"}]},
-    ]
-    for rule in rules:
-        try:
-            ec2.authorize_security_group_ingress(GroupId=sg_id, IpPermissions=[rule])
-            print(f"  ingress permitido: tcp/{rule['FromPort']}")
-        except ClientError as e:
-            if "Duplicate" in e.response["Error"].get("Code", ""):
-                print(f"  ingress tcp/{rule['FromPort']} ya estaba")
-            else:
-                raise
-    return sg_id
 
 
 def create_instance_profile(iam):
@@ -237,8 +199,8 @@ def main():
     print("1. Key pair")
     create_key_pair(ec2)
 
-    print("\n2. Security group + reglas de ingress")
-    sg_id = create_security_group(ec2)
+    print("\n2. Security group de la VPC")
+    sg_id = get_security_group_id(ec2, SG_NAME)
 
     print("\n3. Instance profile (wrapper del rol app-role del lab-04)")
     profile_arn = create_instance_profile(iam)
@@ -262,10 +224,13 @@ def main():
     print(f"  awslocal ec2 terminate-instances --instance-ids {iid}")
 
 
-    print("\n7. terminar instancia")
-    terminate_instance(ec2, "i-26940417c49aab02b")
-
     print("\n6. listar instancias EC2 existentes")
+    list_instances(ec2)
+
+    print("\n7. terminar instancia creada")
+    terminate_instance(ec2, iid)
+
+    print("\n8. listar instancias EC2 existentes tras la terminación")
     list_instances(ec2)
 
 
