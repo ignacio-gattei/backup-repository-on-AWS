@@ -116,9 +116,36 @@ def create_user(iam,username, group: str):
     return username
 
 
+def create_instance_profile(iam, instance_profile_name: str , role_name: str ):
+    """Crea un instance profile y lo asocia a un rol IAM."""
+    try:
+        iam.create_instance_profile(InstanceProfileName=instance_profile_name)
+        print(f"  instance profile '{instance_profile_name}' creado")
+    except ClientError as e:
+        if _already_exists(e):
+            print(f"  instance profile '{instance_profile_name}' ya existe")
+        else:
+            raise
+
+    try:
+        iam.add_role_to_instance_profile(
+            InstanceProfileName=instance_profile_name,
+            RoleName=role_name,
+        )
+        print(f"  rol '{role_name}' adjuntado al profile")
+    except ClientError as e:
+        if "LimitExceeded" in str(e) or "already" in str(e).lower():
+            print(f"  rol '{role_name}' ya estaba adjuntado")
+        else:
+            raise
+
+    arn = iam.get_instance_profile(InstanceProfileName=instance_profile_name)["InstanceProfile"]["Arn"]
+    return arn
+
+
 def create_role(
     iam,
-    role_name: str = "app-role",
+    role_name: str,
     trust_policy_path: str | Path = "trust_policy.json",
     inline_policy_sources: list | None = None,
     attached_policy_sources: list | None = None,
@@ -361,6 +388,22 @@ def cleanup_resources(iam, s3, bucket: str = BUCKET):
                 continue
             print(f"  no se pudo eliminar el grupo '{group_name}': {e}")
 
+    # Delete instance profiles first so roles can be removed cleanly
+    for profile in iam.list_instance_profiles().get("InstanceProfiles", []):
+        profile_name = profile["InstanceProfileName"]
+        try:
+            for role in profile.get("Roles", []):
+                iam.remove_role_from_instance_profile(
+                    InstanceProfileName=profile_name,
+                    RoleName=role["RoleName"],
+                )
+            iam.delete_instance_profile(InstanceProfileName=profile_name)
+            print(f"  instance profile '{profile_name}' eliminado")
+        except ClientError as e:
+            if "NoSuchEntity" in str(e):
+                continue
+            print(f"  no se pudo eliminar el instance profile '{profile_name}': {e}")
+
     # Delete roles and their policies
     for role in iam.list_roles().get("Roles", []):
         role_name = role["RoleName"]
@@ -431,18 +474,15 @@ def main():
 
     # Perfil: Server app y S3
 
-
     print("\n4. Rol con trust policy (EC2) + policies adjuntas")
     role_name, role_arn = create_role(
         iam,
-        role_name="app-role",
+        role_name="api-backup-repository-role",
         trust_policy_path="trust_policy.json",
         attached_policy_sources=[IAM_DIR / "s3_read_policy.json",
                                  IAM_DIR / "s3_write_policy.json"],
     )
 
-    print("\n5. AssumeRole vía STS → credenciales temporales")
-    creds = assume_role_and_use_s3(sts, role_arn)
 
     print("\n=== Resumen de recursos creados ===")
 

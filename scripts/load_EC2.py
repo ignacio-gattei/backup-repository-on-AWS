@@ -19,16 +19,17 @@ import time
 from botocore.exceptions import ClientError
 from pathlib import Path
 from aws_client import make_client
+from load_IAM import create_instance_profile
 
 
 ROOT = Path(__file__).parent.parent
 EC2_DIR = ROOT / "ec2"
 
-KEY_NAME = "ec2-key"
-SG_NAME = "SG-Api-Backup-Repository"
-ROLE_NAME = "app-role"  
-INSTANCE_PROFILE = "app-instance-profile"
-INSTANCE_TAG = "backup-repository-ec2-01"
+KEY_NAME = "ec2-key-01"
+SG_NAME = "api-backup-repository-sg"
+ROLE_NAME = "api-backup-repository-role"  
+INSTANCE_PROFILE = "api-backup-repository-instance-profile"
+INSTANCE_TAG = "api-backup-repository-ec2-01"
 AMI_ID = "ami-0c02fb55956c7d316"
 INSTANCE_TYPE = "t3.micro"
 
@@ -43,8 +44,8 @@ def _already_exists(e: ClientError) -> bool:
     )
 
 
-def get_security_group_id(ec2, group_name: str) -> str:
-    """Devuelve el ID de un security group ya creado por load_VPC.py."""
+def get_security_group_details(ec2, group_name: str) -> tuple[str, str]:
+    """Devuelve el ID y la VPC del security group creado por load_VPC.py."""
     try:
         resp = ec2.describe_security_groups(GroupNames=[group_name])
     except ClientError as e:
@@ -54,6 +55,7 @@ def get_security_group_id(ec2, group_name: str) -> str:
         available = ", ".join(g.get("GroupName", "?") for g in all_groups) or "ninguno"
         raise RuntimeError(
             f"No se encontró el security group '{group_name}'. Ejecutá primero python scripts/load_VPC.py. "
+            f"Grupos disponibles: {available}"
         ) from e
 
     groups = resp.get("SecurityGroups", [])
@@ -63,8 +65,24 @@ def get_security_group_id(ec2, group_name: str) -> str:
         )
 
     sg = groups[0]
-    print(f"  security group existente '{group_name}' encontrado: {sg['GroupId']}")
-    return sg["GroupId"]
+    print(f"  security group existente '{group_name}' encontrado: {sg['GroupId']} en VPC {sg['VpcId']}")
+    return sg["GroupId"], sg["VpcId"]
+
+
+def get_private_subnet_id(ec2, vpc_id: str) -> str:
+    """Obtiene una subred privada de la VPC para lanzar la instancia sin IP pública."""
+    resp = ec2.describe_subnets(Filters=[{"Name": "vpc-id", "Values": [vpc_id]}])
+    subnets = resp.get("Subnets", [])
+    private_subnets = [s for s in subnets if not s.get("MapPublicIpOnLaunch", False)]
+
+    if not private_subnets:
+        raise RuntimeError(
+            f"No se encontraron subredes privadas en la VPC {vpc_id}. Ejecutá primero python scripts/load_VPC.py"
+        )
+
+    subnet = private_subnets[0]
+    print(f"  subred privada seleccionada: {subnet['SubnetId']} ({subnet['CidrBlock']})")
+    return subnet["SubnetId"]
 
 
 # ── pasos ─────────────────────────────────────────────────────────────────────
@@ -83,36 +101,7 @@ def create_key_pair(ec2):
 
 
 
-
-
-def create_instance_profile(iam):
-    """Wrapper que adjunta el rol 'app-role' (lab-04) a una instancia EC2."""
-    try:
-        iam.create_instance_profile(InstanceProfileName=INSTANCE_PROFILE)
-        print(f"  instance profile '{INSTANCE_PROFILE}' creado")
-    except ClientError as e:
-        if _already_exists(e):
-            print(f"  instance profile '{INSTANCE_PROFILE}' ya existe")
-        else:
-            raise
-
-    try:
-        iam.add_role_to_instance_profile(
-            InstanceProfileName=INSTANCE_PROFILE,
-            RoleName=ROLE_NAME,
-        )
-        print(f"  rol '{ROLE_NAME}' adjuntado al profile")
-    except ClientError as e:
-        if "LimitExceeded" in str(e) or "already" in str(e).lower():
-            print(f"  rol '{ROLE_NAME}' ya estaba adjuntado")
-        else:
-            raise
-
-    arn = iam.get_instance_profile(InstanceProfileName=INSTANCE_PROFILE)["InstanceProfile"]["Arn"]
-    return arn
-
-
-def run_instance(ec2, sg_id: str):
+def run_instance(ec2, sg_id: str, subnet_id: str):
     user_data = (EC2_DIR / "user_data.sh").read_text()
 
     resp = ec2.run_instances(
@@ -121,6 +110,7 @@ def run_instance(ec2, sg_id: str):
         MinCount=1, MaxCount=1,
         KeyName=KEY_NAME,
         SecurityGroupIds=[sg_id],
+        SubnetId=subnet_id,
         UserData=user_data,
         IamInstanceProfile={"Name": INSTANCE_PROFILE},
         TagSpecifications=[{
@@ -200,18 +190,18 @@ def main():
     create_key_pair(ec2)
 
     print("\n2. Security group de la VPC")
-    sg_id = get_security_group_id(ec2, SG_NAME)
+    sg_id, vpc_id = get_security_group_details(ec2, SG_NAME)
+    subnet_id = get_private_subnet_id(ec2, vpc_id)
 
-    print("\n3. Instance profile (wrapper del rol app-role del lab-04)")
-    profile_arn = create_instance_profile(iam)
+    print("\n3. Instance profile envuelve el rol ROLE_NAME")
+    profile_arn = create_instance_profile(iam, instance_profile_name=INSTANCE_PROFILE, role_name=ROLE_NAME)
     print(f"   profile ARN: {profile_arn}")
 
-    print("\n4. run-instances con user-data + profile")
-    iid = run_instance(ec2, sg_id)
+    print("\n4. run-instance con user-data + profile")
+    iid = run_instance(ec2, sg_id, subnet_id)
 
     print("\n5. describe-instances — ver lo que quedó aprovisionado")
     describe_instance(ec2, iid)
-
 
     print("\n8. describe-instance-attribute — user-data almacenado")
     show_user_data(ec2, iid)

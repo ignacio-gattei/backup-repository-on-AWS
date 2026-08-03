@@ -86,10 +86,10 @@ def setup_s3_vpc_endpoint(ec2, vpc_id: str, route_table_id: str, region: str):
         return None
 
 
-def setup_security_group_app(ec2, vpc_id: str, on_prem_cidr: str) -> tuple:
+def setup_security_group_app(ec2, vpc_id: str, on_prem_cidr: str, GroupName: str) -> tuple:
     """Crea los Security Groups para la app y la base de datos."""
     sg_app_id = ec2.create_security_group(
-        GroupName="SG-Api-Backup-Repository",
+        GroupName=GroupName,
         Description="Acceso HTTPS desde la coorporacion",
         VpcId=vpc_id,
     )["GroupId"]
@@ -111,15 +111,26 @@ def setup_security_group_app(ec2, vpc_id: str, on_prem_cidr: str) -> tuple:
             },
         ],
     )
+    ec2.authorize_security_group_egress(
+        GroupId=sg_app_id,
+        IpPermissions=[
+            {
+                "IpProtocol": "tcp",
+                "FromPort": 443,
+                "ToPort": 443,
+                "IpRanges": [{"CidrIp": "0.0.0.0/0", "Description": "HTTPS de salida restringido"}],
+            }
+        ],
+    )
 
     print(f"  [+] Security Groups creados (App: {sg_app_id} )")
     return sg_app_id
 
-def setup_security_group_db(ec2, vpc_id: str, sg_app_id) -> tuple:
+def setup_security_group_db(ec2, vpc_id: str, sg_app_id: str, GroupName: str) -> tuple:
     """Crea los Security Groups para la base de datos."""
 
     sg_db_id = ec2.create_security_group(
-        GroupName="SG-DB-Api-Backup-Repository",
+        GroupName=GroupName,
         Description="Acceso SQL desde la Api de Backup Repository(EC2)",
         VpcId=vpc_id,
     )["GroupId"]
@@ -151,13 +162,13 @@ if __name__ == "__main__":
 
     az = get_first_availability_zone(ec2)
 
-    vpc_id = create_vpc(ec2, VPC_CIDR, "VPC-Backups-Corp")
+    vpc_id = create_vpc(ec2, VPC_CIDR, "VPC-Api-Backup-Repository-Corp")
     subnet_app = create_private_subnet(ec2, vpc_id, SUBNET_APP_CIDR, az, f"Subnet-App-{az}")
     subnet_db = create_private_subnet(ec2, vpc_id, SUBNET_DB_CIDR, az, f"Subnet-DB-{az}")
     rt_id = setup_route_table(ec2, vpc_id, [subnet_app, subnet_db], "RT-Privada-Backups")
     setup_s3_vpc_endpoint(ec2, vpc_id, rt_id, REGION)
-    sg_app = setup_security_group_app(ec2, vpc_id, ON_PREM_CIDR)
-    sg_db = setup_security_group_db(ec2, vpc_id, sg_app)
+    sg_app = setup_security_group_app(ec2, vpc_id, ON_PREM_CIDR, "api-backup-repository-sg")
+    sg_db = setup_security_group_db(ec2, vpc_id, sg_app, "api-backup-repository-db-sg")
 
     print("\nConfiguración de la VPC completada con éxito.")
     print("=========================================")
