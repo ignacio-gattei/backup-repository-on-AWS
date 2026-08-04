@@ -467,7 +467,7 @@ def main():
     # Perfil: Desarrolladores de app
     group_dev_apps = create_group(iam,"group_devs_app")
     policy_arns = attach_policies_to_group(iam, group_dev_apps, [IAM_DIR / "s3_read_policy.json"])
-    policy_arns = attach_policies_to_group(iam, group_dev_apps, [IAM_DIR / "ec2_full_access_policy.json"])
+    policy_arns = attach_policies_to_group(iam, group_dev_apps, [IAM_DIR / "ec2_read_operations_policy.json"])
     user_nacho = create_user(iam,"nacho_dev" , group_dev_apps)
     user_mariano = create_user(iam,"mariano_dev" , group_dev_apps)
 
