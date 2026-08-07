@@ -33,6 +33,7 @@ INSTANCE_TAG = "api-backup-repository-ec2-01"
 AMI_ID = "ami-0c02fb55956c7d316"
 INSTANCE_TYPE = "t3.micro"
 
+
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _already_exists(e: ClientError) -> bool:
@@ -69,19 +70,23 @@ def get_security_group_details(ec2, group_name: str) -> tuple[str, str]:
     return sg["GroupId"], sg["VpcId"]
 
 
-def get_private_subnet_id(ec2, vpc_id: str) -> str:
-    """Obtiene una subred privada de la VPC para lanzar la instancia sin IP pública."""
+def get_private_subnet_id(ec2, vpc_id: str, subnet_name: str) -> str:
+    """Obtiene una subred específica de la VPC por su nombre exacto."""
     resp = ec2.describe_subnets(Filters=[{"Name": "vpc-id", "Values": [vpc_id]}])
     subnets = resp.get("Subnets", [])
-    private_subnets = [s for s in subnets if not s.get("MapPublicIpOnLaunch", False)]
 
-    if not private_subnets:
+    matching_subnets = [
+        s for s in subnets
+        if any(tag.get("Key") == "Name" and tag.get("Value") == subnet_name for tag in s.get("Tags", []))
+    ]
+
+    if not matching_subnets:
         raise RuntimeError(
-            f"No se encontraron subredes privadas en la VPC {vpc_id}. Ejecutá primero python scripts/load_VPC.py"
+            f"No se encontró la subred '{subnet_name}' en la VPC {vpc_id}. Ejecutá primero python scripts/load_VPC.py"
         )
 
-    subnet = private_subnets[0]
-    print(f"  subred privada seleccionada: {subnet['SubnetId']} ({subnet['CidrBlock']})")
+    subnet = matching_subnets[0]
+    print(f"  subred seleccionada: {subnet['SubnetId']} ({subnet['CidrBlock']})")
     return subnet["SubnetId"]
 
 
@@ -191,7 +196,7 @@ def main():
 
     print("\n2. Security group de la VPC")
     sg_id, vpc_id = get_security_group_details(ec2, SG_NAME)
-    subnet_id = get_private_subnet_id(ec2, vpc_id)
+    subnet_id = get_private_subnet_id(ec2, vpc_id, subnet_name="Subnet-App-us-east-1a")
 
     print("\n3. Instance profile envuelve el rol ROLE_NAME")
     profile_arn = create_instance_profile(iam, instance_profile_name=INSTANCE_PROFILE, role_name=ROLE_NAME)

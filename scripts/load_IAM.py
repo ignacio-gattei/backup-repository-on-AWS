@@ -477,7 +477,7 @@ def main():
     print("\n4. Rol con trust policy (EC2) + policies adjuntas")
     role_name, role_arn = create_role(
         iam,
-        role_name="api-backup-repository-role",
+        role_name="role-api-backup-repository",
         trust_policy_path="trust_policy.json",
         attached_policy_sources=[IAM_DIR / "s3_read_policy.json",
                                  IAM_DIR / "s3_write_policy.json"],

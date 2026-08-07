@@ -12,7 +12,9 @@ from aws_client import REGION, make_client
 VPC_CIDR = "10.0.0.0/16"
 SUBNET_APP_CIDR = "10.0.1.0/24"
 SUBNET_DB_CIDR = "10.0.2.0/24"
+AZ = "us-east-1a"
 ON_PREM_CIDR = "192.168.0.0/16"
+PROJECT_VPC_NAME = "VPC-Api-Backup-Repository-Corp"
 
 # ==============================================================
 # UTILIDADES
@@ -30,6 +32,8 @@ def get_first_availability_zone(ec2) -> str:
     """Obtiene la primera zona de disponibilidad de la región."""
     azs = ec2.describe_availability_zones()["AvailabilityZones"]
     return azs[0]["ZoneName"]
+
+
 
 
 # ==============================================================
@@ -127,28 +131,133 @@ def setup_security_group_app(ec2, vpc_id: str, on_prem_cidr: str, GroupName: str
     return sg_app_id
 
 def setup_security_group_db(ec2, vpc_id: str, sg_app_id: str, GroupName: str) -> tuple:
-    """Crea los Security Groups para la base de datos."""
+    """Crea el Security Group para la base de datos y permite el acceso desde la EC2."""
+    try:
+        sg_resp = ec2.describe_security_groups(GroupNames=[GroupName])
+        sg_db_id = sg_resp["SecurityGroups"][0]["GroupId"]
+        print(f"  [+] Security Group DB existente encontrado: {sg_db_id}")
+    except ClientError as e:
+        if "InvalidGroup.NotFound" not in str(e):
+            raise
+        sg_db_id = ec2.create_security_group(
+            GroupName=GroupName,
+            Description="Acceso SQL desde la Api de Backup Repository(EC2)",
+            VpcId=vpc_id,
+        )["GroupId"]
+        print(f"  [+] Security Group DB creado: {sg_db_id}")
 
-    sg_db_id = ec2.create_security_group(
-        GroupName=GroupName,
-        Description="Acceso SQL desde la Api de Backup Repository(EC2)",
-        VpcId=vpc_id,
-    )["GroupId"]
+    try:
+        ec2.authorize_security_group_ingress(
+            GroupId=sg_db_id,
+            IpPermissions=[
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 5432,
+                    "ToPort": 5432,
+                    "UserIdGroupPairs": [{"GroupId": sg_app_id, "Description": "Tráfico desde EC2"}],
+                }
+            ],
+        )
+    except ClientError as e:
+        if "already exists" not in str(e).lower() and "duplicate" not in str(e).lower():
+            raise
 
-    ec2.authorize_security_group_ingress(
-        GroupId=sg_db_id,
-        IpPermissions=[
-            {
-                "IpProtocol": "tcp",
-                "FromPort": 5432,
-                "ToPort": 5432,
-                "UserIdGroupPairs": [{"GroupId": sg_app_id, "Description": "Tráfico desde EC2"}],
-            }
-        ],
-    )
+    print(f"  [+] Regla de acceso a PostgreSQL habilitada para {sg_db_id}")
+    return sg_db_id
 
-    print(f"  [+] Security Groups creado (DB: {sg_db_id})")
-    return  sg_db_id
+
+def cleanup_vpc_configuration(ec2, vpc_name: str = PROJECT_VPC_NAME) -> None:
+    """Borra la configuración de VPC del proyecto en orden seguro."""
+    print(f"\n[cleanup] Buscando VPC '{vpc_name}'...")
+    vpcs = ec2.describe_vpcs(
+        Filters=[
+            {"Name": "tag:Name", "Values": [vpc_name]},
+            {"Name": "state", "Values": ["available"]},
+        ]
+    ).get("Vpcs", [])
+
+    if not vpcs:
+        print(f"[cleanup] No se encontró la VPC '{vpc_name}'. Nada para borrar.")
+        return
+
+    print(f"[cleanup] VPCs encontradas: {', '.join(v['VpcId'] for v in vpcs)}")
+
+    for vpc in vpcs:
+        vpc_id = vpc["VpcId"]
+        print(f"\n[cleanup] Procesando VPC: {vpc_id}")
+
+        # 1) Endpoints de VPC
+        endpoints = ec2.describe_vpc_endpoints(
+            Filters=[{"Name": "vpc-id", "Values": [vpc_id]}]
+        ).get("VpcEndpoints", [])
+        for endpoint in endpoints:
+            endpoint_id = endpoint["VpcEndpointId"]
+            try:
+                ec2.delete_vpc_endpoints(VpcEndpointIds=[endpoint_id])
+                print(f"[cleanup] VPC endpoint borrado: {endpoint_id}")
+            except ClientError as e:
+                print(f"[cleanup] No se pudo borrar endpoint {endpoint_id}: {e}")
+
+        # 2) Security groups del proyecto
+        groups = ec2.describe_security_groups(
+            Filters=[{"Name": "vpc-id", "Values": [vpc_id]}]
+        ).get("SecurityGroups", [])
+        group_names = {"sg-api-backup-repository", "sg-db-api-backup-repository"}
+        for group in groups:
+            group_id = group["GroupId"]
+            group_name = group.get("GroupName", "")
+            if group_name not in group_names:
+                continue
+            try:
+                ec2.delete_security_group(GroupId=group_id)
+                print(f"[cleanup] Security group borrado: {group_name} ({group_id})")
+            except ClientError as e:
+                print(f"[cleanup] No se pudo borrar SG {group_name} ({group_id}): {e}")
+
+        # 3) Tablas de ruteo no main y sus asociaciones
+        route_tables = ec2.describe_route_tables(
+            Filters=[{"Name": "vpc-id", "Values": [vpc_id]}]
+        ).get("RouteTables", [])
+        for route_table in route_tables:
+            route_table_id = route_table["RouteTableId"]
+            is_main = any(assoc.get("Main", False) for assoc in route_table.get("Associations", []))
+            if is_main:
+                continue
+
+            for assoc in route_table.get("Associations", []):
+                assoc_id = assoc.get("RouteTableAssociationId")
+                if not assoc_id:
+                    continue
+                try:
+                    ec2.disassociate_route_table(AssociationId=assoc_id)
+                    print(f"[cleanup] Asociación de tabla de rutas removida: {assoc_id}")
+                except ClientError as e:
+                    print(f"[cleanup] No se pudo remover asociación {assoc_id}: {e}")
+
+            try:
+                ec2.delete_route_table(RouteTableId=route_table_id)
+                print(f"[cleanup] Tabla de ruteo borrada: {route_table_id}")
+            except ClientError as e:
+                print(f"[cleanup] No se pudo borrar tabla de ruteo {route_table_id}: {e}")
+
+        # 4) Subredes
+        subnets = ec2.describe_subnets(
+            Filters=[{"Name": "vpc-id", "Values": [vpc_id]}]
+        ).get("Subnets", [])
+        for subnet in subnets:
+            subnet_id = subnet["SubnetId"]
+            try:
+                ec2.delete_subnet(SubnetId=subnet_id)
+                print(f"[cleanup] Subred borrada: {subnet_id}")
+            except ClientError as e:
+                print(f"[cleanup] No se pudo borrar subred {subnet_id}: {e}")
+
+        # 5) Borrar la VPC
+        try:
+            ec2.delete_vpc(VpcId=vpc_id)
+            print(f"[cleanup] VPC borrada: {vpc_id}")
+        except ClientError as e:
+            print(f"[cleanup] No se pudo borrar VPC {vpc_id}: {e}")
 
 
 
@@ -158,18 +267,18 @@ def setup_security_group_db(ec2, vpc_id: str, sg_app_id: str, GroupName: str) ->
 if __name__ == "__main__":
     ec2 = make_ec2_client()
 
+    cleanup_vpc_configuration(ec2, PROJECT_VPC_NAME)
+
     print("Configuracion de la VPC\n")
 
-    az = get_first_availability_zone(ec2)
-
-    vpc_id = create_vpc(ec2, VPC_CIDR, "VPC-Api-Backup-Repository-Corp")
-    subnet_app = create_private_subnet(ec2, vpc_id, SUBNET_APP_CIDR, az, f"Subnet-App-{az}")
-    subnet_db = create_private_subnet(ec2, vpc_id, SUBNET_DB_CIDR, az, f"Subnet-DB-{az}")
-    rt_id = setup_route_table(ec2, vpc_id, [subnet_app, subnet_db], "RT-Privada-Backups")
+    vpc_id = create_vpc(ec2, VPC_CIDR, PROJECT_VPC_NAME)
+    subnet_app = create_private_subnet(ec2, vpc_id, SUBNET_APP_CIDR, AZ, "subnet-App")
+    subnet_db = create_private_subnet(ec2, vpc_id, SUBNET_DB_CIDR, AZ, "subnet-DB")
+    rt_id = setup_route_table(ec2, vpc_id, [subnet_app, subnet_db], "rt-privada-api-repo-aackups")
     setup_s3_vpc_endpoint(ec2, vpc_id, rt_id, REGION)
-    sg_app = setup_security_group_app(ec2, vpc_id, ON_PREM_CIDR, "api-backup-repository-sg")
-    sg_db = setup_security_group_db(ec2, vpc_id, sg_app, "api-backup-repository-db-sg")
-
+    sg_app = setup_security_group_app(ec2, vpc_id, ON_PREM_CIDR, "sg-api-backup-repository")
+    sg_db = setup_security_group_db(ec2, vpc_id, sg_app, "sg-db-api-backup-repository")
+    
     print("\nConfiguración de la VPC completada con éxito.")
     print("=========================================")
     print(f" ID de la VPC:         {vpc_id}")
