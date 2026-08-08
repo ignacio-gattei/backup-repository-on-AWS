@@ -6,23 +6,27 @@
       "Effect": "Allow",
       "Action": [
         "s3:PutObject",
-        "s3:PutObjectAcl",
         "s3:AbortMultipartUpload",
         "s3:ListMultipartUploadParts"
       ],
-      "Resource": "arn:aws:s3:::file-repo/*"
+      "Resource": "arn:aws:s3:::bucket-api-file-repo/*"
     },
     {
-      "Sid": "AllowDeleteObjects",
+      "Sid": "S3DeleteFiles",
       "Effect": "Allow",
       "Action": "s3:DeleteObject",
-      "Resource": "arn:aws:s3:::file-repo/*"
+      "Resource": "arn:aws:s3:::bucket-api-file-repo/*"
     },
     {
-      "Sid": "AllowListBucket",
+      "Sid": "S3ListFiles",
       "Effect": "Allow",
       "Action": "s3:ListBucket",
-      "Resource": "arn:aws:s3:::file-repo"
+      "Resource": "arn:aws:s3:::bucket-api-file-repo",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": ["", "*"]
+        }
+      }
     }
   ]
 }

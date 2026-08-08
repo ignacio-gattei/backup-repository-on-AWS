@@ -8,13 +8,13 @@
         "s3:GetObject",
         "s3:GetObjectVersion"
       ],
-      "Resource": "arn:aws:s3:::file-repo/*"
+      "Resource": "arn:aws:s3:::bucket-api-file-repo/*"
     },
     {
-      "Sid": "AllowListBucket",
+      "Sid": "AllowListFiles",
       "Effect": "Allow",
       "Action": "s3:ListBucket",
-      "Resource": "arn:aws:s3:::file-repo"
+      "Resource": "arn:aws:s3:::bucket-api-file-repo"
     }
   ]
 }

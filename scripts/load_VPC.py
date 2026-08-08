@@ -9,38 +9,44 @@ from aws_client import REGION, make_client
 # ==============================================================
 # CONFIGURACIÓN
 # ==============================================================
+# CIDR base de la VPC privada del proyecto.
 VPC_CIDR = "10.0.0.0/16"
+# Subred privada destinada a la aplicación.
 SUBNET_APP_CIDR = "10.0.1.0/24"
+# Subred privada destinada a la base de datos.
 SUBNET_DB_CIDR = "10.0.2.0/24"
+# Subred adicional usada para el acceso administrativo de la app.
+SUBNET_ADMIN_APP_CIDR = "10.0.3.0/24"
+# Zona de disponibilidad utilizada para crear las subredes.
 AZ = "us-east-1a"
+# Red corporativa.
 ON_PREM_CIDR = "192.168.0.0/16"
+# Nombre identificador de la VPC creada por este script.
 PROJECT_VPC_NAME = "VPC-Api-Backup-Repository-Corp"
 
 # ==============================================================
 # UTILIDADES
 # ==============================================================
+
 def make_ec2_client():
+    """Crea el cliente de EC2 para interactuar con la API de AWS/LocalStack."""
     return make_client("ec2")
 
 
 def add_name_tag(ec2, resource_id: str, name: str):
-    """Agrega el tag 'Name' a un recurso EC2."""
+    """Agrega el tag 'Name' a un recurso EC2 para identificarlo fácilmente."""
     ec2.create_tags(Resources=[resource_id], Tags=[{"Key": "Name", "Value": name}])
 
 
 def get_first_availability_zone(ec2) -> str:
-    """Obtiene la primera zona de disponibilidad de la región."""
+    """Obtiene la primera zona de disponibilidad disponible en la región actual."""
     azs = ec2.describe_availability_zones()["AvailabilityZones"]
     return azs[0]["ZoneName"]
 
 
 
-
-# ==============================================================
-# MÓDULOS DE INFRAESTRUCTURA
-# ==============================================================
 def create_vpc(ec2, cidr: str, name: str) -> str:
-    """Crea una VPC y habilita DNS."""
+    """Crea una VPC nueva y habilita los servicios de DNS para la infraestructura."""
     vpc_id = ec2.create_vpc(CidrBlock=cidr)["Vpc"]["VpcId"]
     ec2.modify_vpc_attribute(VpcId=vpc_id, EnableDnsSupport={"Value": True})
     ec2.modify_vpc_attribute(VpcId=vpc_id, EnableDnsHostnames={"Value": True})
@@ -50,7 +56,7 @@ def create_vpc(ec2, cidr: str, name: str) -> str:
 
 
 def create_private_subnet(ec2, vpc_id: str, cidr: str, az: str, name: str) -> str:
-    """Crea una subred privada en una zona específica."""
+    """Crea una subred privada dentro de la VPC para alojar recursos internos."""
     subnet_id = ec2.create_subnet(
         VpcId=vpc_id,
         CidrBlock=cidr,
@@ -61,8 +67,9 @@ def create_private_subnet(ec2, vpc_id: str, cidr: str, az: str, name: str) -> st
     return subnet_id
 
 
+
 def setup_route_table(ec2, vpc_id: str, subnet_ids: list, name: str) -> str:
-    """Crea una tabla de ruteo privada y la asocia a las subredes."""
+    """Crea una tabla de ruteo privada y la asocia a las subredes del proyecto."""
     rt_id = ec2.create_route_table(VpcId=vpc_id)["RouteTable"]["RouteTableId"]
     add_name_tag(ec2, rt_id, name)
 
@@ -73,8 +80,9 @@ def setup_route_table(ec2, vpc_id: str, subnet_ids: list, name: str) -> str:
     return rt_id
 
 
+
 def setup_s3_vpc_endpoint(ec2, vpc_id: str, route_table_id: str, region: str):
-    """Crea un Gateway Endpoint para S3 en la VPC."""
+    """Crea un punto de enlace privado de S3 para que los recursos de la VPC accedan sin Internet."""
     try:
         vpce_id = ec2.create_vpc_endpoint(
             VpcId=vpc_id,
@@ -90,7 +98,8 @@ def setup_s3_vpc_endpoint(ec2, vpc_id: str, route_table_id: str, region: str):
         return None
 
 
-def setup_security_group_app(ec2, vpc_id: str, on_prem_cidr: str, GroupName: str) -> tuple:
+
+def setup_security_group_app(ec2, vpc_id: str, on_prem_cidr: str, sg_admin_app: str, GroupName: str) -> tuple:
     """Crea los Security Groups para la app y la base de datos."""
     sg_app_id = ec2.create_security_group(
         GroupName=GroupName,
@@ -101,19 +110,22 @@ def setup_security_group_app(ec2, vpc_id: str, on_prem_cidr: str, GroupName: str
     ec2.authorize_security_group_ingress(
         GroupId=sg_app_id,
         IpPermissions=[
-            {
-                "IpProtocol": "tcp",
-                "FromPort": 22,
-                "ToPort": 22,
-                "IpRanges": [{"CidrIp": on_prem_cidr, "Description": "SSH desde la corporación"}],
-            },
+
+
+
             {
                 "IpProtocol": "tcp",
                 "FromPort": 443,
                 "ToPort": 443,
                 "IpRanges": [{"CidrIp": on_prem_cidr, "Description": "Tráfico coorporativo"}],
             },
-        ],
+        {
+                    "IpProtocol": "tcp",
+                    "FromPort": 22,
+                    "ToPort": 22,
+                    "UserIdGroupPairs": [{"GroupId": sg_admin_app, "Description": "SSH exclusivo desde Bastion Host"}],
+                }
+            ],
     )
     ec2.authorize_security_group_egress(
         GroupId=sg_app_id,
@@ -122,7 +134,7 @@ def setup_security_group_app(ec2, vpc_id: str, on_prem_cidr: str, GroupName: str
                 "IpProtocol": "tcp",
                 "FromPort": 443,
                 "ToPort": 443,
-                "IpRanges": [{"CidrIp": "0.0.0.0/0", "Description": "HTTPS de salida restringido"}],
+                "IpRanges": [{"CidrIp": on_prem_cidr, "Description": "HTTPS de salida restringido"}],
             }
         ],
     )
@@ -130,7 +142,33 @@ def setup_security_group_app(ec2, vpc_id: str, on_prem_cidr: str, GroupName: str
     print(f"  [+] Security Groups creados (App: {sg_app_id} )")
     return sg_app_id
 
-def setup_security_group_db(ec2, vpc_id: str, sg_app_id: str, GroupName: str) -> tuple:
+
+def setup_security_group_admin_app(ec2, vpc_id: str, on_prem_cidr: str, GroupName: str) -> tuple:
+    """Crea un security group específico para administración por SSH desde la red corporativa."""
+    sg_admin_id = ec2.create_security_group(
+        GroupName=GroupName,
+        Description="Acceso administrativo por SSH",
+        VpcId=vpc_id,
+    )["GroupId"]
+
+    ec2.authorize_security_group_ingress(
+        GroupId=sg_admin_id,
+        IpPermissions=[
+            {
+                "IpProtocol": "tcp",
+                "FromPort": 22,
+                "ToPort": 22,
+                "IpRanges": [{"CidrIp": on_prem_cidr, "Description": "SSH desde la corporación"}],
+            }
+        ],
+    )
+
+    print(f"  [+] Security Group de administración creado (App: {sg_admin_id} )")
+    return sg_admin_id
+
+
+
+def setup_security_group_db(ec2, vpc_id: str, sg_app_id: str, sg_admin_app: str, GroupName: str) -> tuple:
     """Crea el Security Group para la base de datos y permite el acceso desde la EC2."""
     try:
         sg_resp = ec2.describe_security_groups(GroupNames=[GroupName])
@@ -155,6 +193,12 @@ def setup_security_group_db(ec2, vpc_id: str, sg_app_id: str, GroupName: str) ->
                     "FromPort": 5432,
                     "ToPort": 5432,
                     "UserIdGroupPairs": [{"GroupId": sg_app_id, "Description": "Tráfico desde EC2"}],
+                },
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 22,
+                    "ToPort": 22,
+                    "UserIdGroupPairs": [{"GroupId": sg_admin_app, "Description": "SSH exclusivo desde Bastion Host"}],
                 }
             ],
         )
@@ -167,7 +211,7 @@ def setup_security_group_db(ec2, vpc_id: str, sg_app_id: str, GroupName: str) ->
 
 
 def cleanup_vpc_configuration(ec2, vpc_name: str = PROJECT_VPC_NAME) -> None:
-    """Borra la configuración de VPC del proyecto en orden seguro."""
+    """Elimina la configuración de VPC del proyecto en orden seguro para evitar dependencias."""
     print(f"\n[cleanup] Buscando VPC '{vpc_name}'...")
     vpcs = ec2.describe_vpcs(
         Filters=[
@@ -265,19 +309,30 @@ def cleanup_vpc_configuration(ec2, vpc_name: str = PROJECT_VPC_NAME) -> None:
 # ORQUESTADOR (MAIN)
 # ==============================================================
 if __name__ == "__main__":
+    # Inicializa el cliente de EC2 para ejecutar la infraestructura.
     ec2 = make_ec2_client()
 
+    # Limpia recursos previos de la VPC antes de crear la infraestructura nueva.
     cleanup_vpc_configuration(ec2, PROJECT_VPC_NAME)
 
-    print("Configuracion de la VPC\n")
+    print("Configurando VPC...\n")
 
+    # Crea la VPC principal del proyecto.
     vpc_id = create_vpc(ec2, VPC_CIDR, PROJECT_VPC_NAME)
+    # Crea la subred privada para la aplicación.
     subnet_app = create_private_subnet(ec2, vpc_id, SUBNET_APP_CIDR, AZ, "subnet-App")
+    # Crea la subred privada para la base de datos.
     subnet_db = create_private_subnet(ec2, vpc_id, SUBNET_DB_CIDR, AZ, "subnet-DB")
-    rt_id = setup_route_table(ec2, vpc_id, [subnet_app, subnet_db], "rt-privada-api-repo-aackups")
+    # Crea la tabla de ruteo y la asocia a las subredes.
+    rt_id = setup_route_table(ec2, vpc_id, [subnet_app, subnet_db], "rt-privada-api-repo-backups")
+    # Crea el endpoint privado de S3 para la VPC.
     setup_s3_vpc_endpoint(ec2, vpc_id, rt_id, REGION)
-    sg_app = setup_security_group_app(ec2, vpc_id, ON_PREM_CIDR, "sg-api-backup-repository")
-    sg_db = setup_security_group_db(ec2, vpc_id, sg_app, "sg-db-api-backup-repository")
+    # Crea el security group administrativo para SSH.
+    sg_admin_app = setup_security_group_admin_app(ec2, vpc_id, SUBNET_ADMIN_APP_CIDR, "sg-admin-app")
+    # Crea y configura el security group de la aplicación.
+    sg_app = setup_security_group_app(ec2, vpc_id, ON_PREM_CIDR, sg_admin_app, "sg-api-backup-repository")
+    # Crea y configura el security group de la base de datos.
+    sg_db = setup_security_group_db(ec2, vpc_id, sg_app, sg_admin_app, "sg-db-api-backup-repository")
     
     print("\nConfiguración de la VPC completada con éxito.")
     print("=========================================")

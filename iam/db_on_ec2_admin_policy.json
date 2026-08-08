@@ -2,25 +2,39 @@
     "Version": "2012-10-17",
     "Statement": [
         {
-            "Sid": "AllowGlobalDescribe",
+            "Sid": "DescribeOnlyTargetInstance",
             "Effect": "Allow",
             "Action": [
-                "ec2:Describe*",
-                "ssm:DescribeSessions",
-                "ssm:GetConnectionStatus",
-                "ssm:DescribeInstanceInformation"
+                "ec2:DescribeInstances",
+                "ec2:DescribeInstanceStatus",
+                "ec2:DescribeTags"
             ],
-            "Resource": "*"
+            "Resource": "arn:aws:ec2:*:*:instance/*",
+            "Condition": {
+                "StringEquals": {
+                    "aws:ResourceTag/Name": "db-on-ec2-api-repo-backup"
+                }
+            }
         },
         {
-            "Sid": "FullControlAndSSMAccess",
+            "Sid": "StateControlTargetInstance",
             "Effect": "Allow",
             "Action": [
                 "ec2:StartInstances",
                 "ec2:StopInstances",
-                "ec2:RebootInstances",
-                "ec2:TerminateInstances",
-                "ec2:ModifyInstanceAttribute",
+                "ec2:RebootInstances"
+            ],
+            "Resource": "arn:aws:ec2:*:*:instance/*",
+            "Condition": {
+                "StringEquals": {
+                    "aws:ResourceTag/Name": "db-on-ec2-api-repo-backup"
+                }
+            }
+        },
+        {
+            "Sid": "SSMToTargetInstance",
+            "Effect": "Allow",
+            "Action": [
                 "ssm:StartSession",
                 "ssm:TerminateSession",
                 "ssm:ResumeSession"

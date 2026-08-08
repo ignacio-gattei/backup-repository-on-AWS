@@ -9,16 +9,14 @@
         "ec2:DescribeInstanceStatus",
         "ec2:DescribeSecurityGroups",
         "ec2:DescribeSubnets",
-        "ec2:DescribeTags",
-        "cloudwatch:GetMetricData",
-        "cloudwatch:GetMetricStatistics",
-        "cloudwatch:ListMetrics",
-        "logs:GetLogEvents",
-        "logs:FilterLogEvents",
-        "logs:DescribeLogGroups",
-        "logs:DescribeLogStreams"
+        "ec2:DescribeTags"
       ],
-      "Resource": "*"
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "ec2:ResourceTag/Name": "ec2-api-backup-repository-01"
+        }
+      }
     },
     {
       "Sid": "EC2InstanceStateManagement",
@@ -28,7 +26,12 @@
         "ec2:StopInstances",
         "ec2:RebootInstances"
       ],
-      "Resource": "*"
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "ec2:ResourceTag/Name": "ec2-api-backup-repository-01"
+        }
+      }
     },
     {
       "Sid": "EC2GetConsoleOutput",
@@ -36,6 +39,25 @@
       "Action": [
         "ec2:GetConsoleOutput",
         "ec2:GetConsoleScreenshot"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "ec2:ResourceTag/Name": "ec2-api-backup-repository-01"
+        }
+      }
+    },
+    {
+      "Sid": "MonitoringAndLogs",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:GetMetricData",
+        "cloudwatch:GetMetricStatistics",
+        "cloudwatch:ListMetrics",
+        "logs:GetLogEvents",
+        "logs:FilterLogEvents",
+        "logs:DescribeLogGroups",
+        "logs:DescribeLogStreams"
       ],
       "Resource": "*"
     }
