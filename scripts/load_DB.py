@@ -17,20 +17,33 @@ from botocore.exceptions import ClientError
 
 from aws_client import make_client
 
+# Ruta raíz del proyecto para localizar recursos auxiliares.
 ROOT = Path(__file__).parent.parent
+# Carpeta donde se almacenan los scripts de inicialización de EC2.
 EC2_DIR = ROOT / "ec2"
 
+# Nombre del par de claves SSH usado para la instancia de base de datos.
 KEY_NAME = "key-ec2-db"
+# Etiqueta usada para identificar la instancia EC2 de PostgreSQL.
 DB_INSTANCE_TAG = "db-on-ec2-api-repo-backup"
+# Nombre del security group asociado a la base de datos.
 DB_SECURITY_GROUP_NAME = "sg-db-api-backup-repository"
+# Nombre de la subred privada donde se desplegará la base de datos.
 DB_SUBNET_NAME = "subnet-DB"
+# Nombre del secret de Secrets Manager que almacena las credenciales de la DB.
 DB_SECRET_NAME = "secret-db-api-repo-backup"
+# AMI de Ubuntu usada para la instancia de PostgreSQL.
 AMI_ID = "ami-0c02fb55956c7d316"
+# Tipo de instancia EC2 seleccionada para la base de datos.
 INSTANCE_TYPE = "t3.micro"
+# Ruta del script de inicialización que configura PostgreSQL en la instancia.
 USER_DATA_PATH = EC2_DIR / "postgres_user_data.sh"
 
+# Nombre de la base de datos PostgreSQL a crear o reutilizar.
 DB_NAME = "DB_API_REPO_BACKUP"
+# Usuario administrador para la base de datos PostgreSQL.
 DB_USERNAME = "user_db_app_api_repo"
+# Puerto TCP expuesto por PostgreSQL.
 DB_PORT = 5432
 
 
@@ -51,6 +64,7 @@ def _already_exists(e: ClientError) -> bool:
 
 
 def create_key_pair(ec2) -> None:
+    """Crea o reutiliza el par de claves SSH para la instancia de DB."""
     try:
         resp = ec2.create_key_pair(KeyName=KEY_NAME)
         print(f"  key pair '{KEY_NAME}' creada (fingerprint: {resp['KeyFingerprint'][:20]}...)")
@@ -130,7 +144,8 @@ def get_security_group_details(ec2, group_name: str = DB_SECURITY_GROUP_NAME) ->
 
 
 def get_private_subnet_id(ec2, vpc_id: str, subnet_name: str) -> str:
-    """Obtiene una subred específica de la VPC por su nombre exacto."""
+    """Obtiene la subred privada de la VPC por su nombre de etiqueta."""
+
     resp = ec2.describe_subnets(Filters=[{"Name": "vpc-id", "Values": [vpc_id]}])
     subnets = resp.get("Subnets", [])
 
@@ -158,7 +173,7 @@ def get_private_subnet_id(ec2, vpc_id: str, subnet_name: str) -> str:
 
 
 def find_existing_db_instance(ec2) -> dict | None:
-    """Busca una instancia EC2 existente para PostgreSQL por tag Name."""
+    """Busca una instancia EC2 existente para PostgreSQL por etiqueta."""
     resp = ec2.describe_instances(
         Filters=[
             {"Name": "tag:Name", "Values": [DB_INSTANCE_TAG]},
@@ -176,6 +191,7 @@ def find_existing_db_instance(ec2) -> dict | None:
 
 
 def run_db_instance(ec2, sg_id: str, subnet_id: str) -> str:
+    """Lanza una nueva instancia EC2 para PostgreSQL con user-data."""
     user_data = USER_DATA_PATH.read_text()
     resp = ec2.run_instances(
         ImageId=AMI_ID,
@@ -216,7 +232,7 @@ def wait_for_instance(ec2, instance_id: str) -> dict:
 
 
 def create_or_get_db_instance(ec2, sg_id: str, subnet_id: str) -> dict:
-    """Crea la instancia EC2 para PostgreSQL si no existe, o devuelve la existente."""
+    """Crea la instancia de base de datos si no existe o reutiliza la actual."""
     instance = find_existing_db_instance(ec2)
     if instance:
         print(f"  la base de datos '{DB_INSTANCE_TAG}' ya existe")
@@ -230,19 +246,20 @@ def create_or_get_db_instance(ec2, sg_id: str, subnet_id: str) -> dict:
 
 
 def main() -> None:
+
     ec2 = make_client("ec2")
     sm = make_client("secretsmanager")
 
-    print("\n2. Recuperar security group y VPC de la DB")
+    print("\n Recuperar security group y VPC de la DB")
     sg_id, vpc_id = get_security_group_details(ec2,DB_SECURITY_GROUP_NAME)
 
-    print("\n3. Obtener subred dedicada a la DB")
+    print("\n Obtener subred dedicada a la DB")
     subnet_id = get_private_subnet_id(ec2, vpc_id, subnet_name=DB_SUBNET_NAME)
     endpoint = get_subnet_endpoint(ec2, subnet_id)
     password = create_secret(sm, DB_SECRET_NAME, endpoint)
     print(f"  subred de DB: {subnet_id}")
 
-    print("\n4. Crear o recuperar PostgreSQL sobre EC2")
+    print("\n Crear o recuperar PostgreSQL sobre EC2")
     instance = create_or_get_db_instance(ec2, sg_id, subnet_id)
     
 

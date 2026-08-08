@@ -22,21 +22,31 @@ from aws_client import make_client
 from load_IAM import create_instance_profile
 
 
+# Ruta raíz del proyecto para localizar archivos auxiliares.
 ROOT = Path(__file__).parent.parent
+# Carpeta que contiene los scripts de inicialización de EC2.
 EC2_DIR = ROOT / "ec2"
 
+# Nombre del par de claves SSH utilizado para la instancia.
 KEY_NAME = "ec2-key-01"
+# Nombre del security group asociado a la instancia de aplicación.
 SG_NAME = "sg-api-backup-repository"
-ROLE_NAME = "role-app-api-backup-repository"  
+# Nombre del rol IAM que se asocia a la instancia.
+ROLE_NAME = "role-app-api-backup-repository"
+# Nombre del instance profile que encapsula el rol IAM.
 INSTANCE_PROFILE = "instance-profile-api-backup-repository"
+# Etiqueta usada para identificar la instancia EC2 del proyecto.
 INSTANCE_TAG = "ec2-api-backup-repository-01"
+# AMI de Ubuntu usada para el despliegue de la instancia.
 AMI_ID = "ami-0c02fb55956c7d316"
+# Tipo de instancia EC2 seleccionada para la demostración.
 INSTANCE_TYPE = "t3.micro"
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _already_exists(e: ClientError) -> bool:
+    """Indica si el error corresponde a un recurso que ya existe."""
     code = e.response["Error"].get("Code", "")
     return (
         code in ("EntityAlreadyExists", "InvalidKeyPair.Duplicate", "InvalidGroup.Duplicate")
@@ -46,7 +56,7 @@ def _already_exists(e: ClientError) -> bool:
 
 
 def get_security_group_details(ec2, group_name: str) -> tuple[str, str]:
-    """Devuelve el ID y la VPC del security group creado por load_VPC.py."""
+    """Devuelve el ID y la VPC del security group del proyecto."""
     try:
         resp = ec2.describe_security_groups(GroupNames=[group_name])
     except ClientError as e:
@@ -71,7 +81,7 @@ def get_security_group_details(ec2, group_name: str) -> tuple[str, str]:
 
 
 def get_private_subnet_id(ec2, vpc_id: str, subnet_name: str) -> str:
-    """Obtiene una subred específica de la VPC por su nombre exacto."""
+    """Obtiene la subred privada de la VPC por su nombre de etiqueta."""
     resp = ec2.describe_subnets(Filters=[{"Name": "vpc-id", "Values": [vpc_id]}])
     subnets = resp.get("Subnets", [])
 
@@ -91,6 +101,7 @@ def get_private_subnet_id(ec2, vpc_id: str, subnet_name: str) -> str:
 
 
 def create_key_pair(ec2):
+    """Crea o reutiliza el par de claves SSH para la instancia."""
     try:
         resp = ec2.create_key_pair(KeyName=KEY_NAME)
         print(f"  key pair '{KEY_NAME}' creada (fingerprint: {resp['KeyFingerprint'][:20]}...)")
@@ -105,6 +116,7 @@ def create_key_pair(ec2):
 
 
 def run_instance(ec2, sg_id: str, subnet_id: str):
+    """Lanza una instancia EC2 con user-data e instance profile."""
     user_data = (EC2_DIR / "user_data.sh").read_text()
 
     resp = ec2.run_instances(
@@ -128,6 +140,7 @@ def run_instance(ec2, sg_id: str, subnet_id: str):
 
 
 def describe_instance(ec2, iid: str):
+    """Muestra el estado y la configuración básica de la instancia."""
     # Pequeña espera para que LocalStack registre el estado
     time.sleep(1)
     resp = ec2.describe_instances(InstanceIds=[iid])
@@ -142,7 +155,7 @@ def describe_instance(ec2, iid: str):
 
 
 def list_instances(ec2):
-    """Imprime las instancias EC2 no terminadas."""
+    """Muestra las instancias EC2 activas del entorno."""
     instances = find_existing_instances(ec2)
 
     if not instances:
@@ -163,7 +176,7 @@ def list_instances(ec2):
 
 
 def find_project_instances(ec2, instance_name: str = INSTANCE_TAG) -> list[dict]:
-    """Busca instancias EC2 del proyecto por tag Name que no estén terminadas."""
+    """Busca instancias del proyecto por etiqueta Name."""
     resp = ec2.describe_instances(
         Filters=[
             {"Name": "tag:Name", "Values": [instance_name]},
@@ -175,7 +188,7 @@ def find_project_instances(ec2, instance_name: str = INSTANCE_TAG) -> list[dict]
 
 
 def find_existing_instances(ec2) -> list[dict]:
-    """Busca todas las instancias EC2 existentes que no estén terminadas."""
+    """Busca todas las instancias EC2 activas del entorno."""
     resp = ec2.describe_instances(
         Filters=[
             {"Name": "instance-state-name", "Values": ["pending", "running", "stopping", "stopped"]},
@@ -186,7 +199,7 @@ def find_existing_instances(ec2) -> list[dict]:
 
 
 def delete_instances(ec2):
-    """Termina todas las instancias EC2 existentes que no estén terminadas."""
+    """Termina las instancias EC2 activas antes de crear nuevas."""
     instances = find_existing_instances(ec2)
 
     if not instances:
@@ -204,7 +217,7 @@ def delete_instances(ec2):
 
 
 def terminate_instance(ec2, iid: str):
-    """Termina una instancia EC2 por su ID."""
+    """Termina una instancia EC2 por su identificador."""
     resp = ec2.terminate_instances(InstanceIds=[iid])
     term = resp["TerminatingInstances"][0]
     print(
@@ -215,6 +228,7 @@ def terminate_instance(ec2, iid: str):
 
 
 def show_user_data(ec2, iid: str):
+    """Muestra el user-data almacenado en la instancia."""
     import base64
     resp = ec2.describe_instance_attribute(InstanceId=iid, Attribute="userData")
     encoded = resp.get("UserData", {}).get("Value")
@@ -229,32 +243,42 @@ def show_user_data(ec2, iid: str):
 # ── main ──────────────────────────────────────────────────────────────────────
 
 def main():
+    """Orquesta la creación, inspección y limpieza de la instancia EC2 del proyecto."""
 
+    # Inicializa los clientes de EC2 e IAM para trabajar con AWS o LocalStack.
     ec2 = make_client("ec2")
     iam = make_client("iam")
 
+    # Elimina instancias previas para evitar conflictos al volver a ejecutar el script.
     delete_instances(ec2)
 
+    # Crea o reutiliza el par de claves SSH para la instancia.
     print("1. Key pair")
     create_key_pair(ec2)
 
+    # Recupera el security group y la subred privada de la VPC del proyecto.
     print("\n2. Security group de la VPC")
     sg_id, vpc_id = get_security_group_details(ec2, SG_NAME)
     subnet_id = get_private_subnet_id(ec2, vpc_id, subnet_name="subnet-App")
 
+    # Crea el instance profile que permitirá a la instancia asumir el rol de la app.
     print("\n3. Instance profile envuelve el rol ROLE_NAME")
     profile_arn = create_instance_profile(iam, instance_profile_name=INSTANCE_PROFILE, role_name=ROLE_NAME)
     print(f"   profile ARN: {profile_arn}")
 
+    # Lanza la instancia EC2 con user-data e instance profile.
     print("\n4. run-instance con user-data + profile")
     iid = run_instance(ec2, sg_id, subnet_id)
 
+    # Muestra el estado y los datos básicos de la instancia recién creada.
     print("\n5. describe-instances — ver lo que quedó aprovisionado")
     describe_instance(ec2, iid)
 
+    # Muestra el user-data que quedó almacenado en la instancia.
     print("\n8. describe-instance-attribute — user-data almacenado")
     show_user_data(ec2, iid)
 
+    # Resume los valores principales del despliegue.
     print("\n=== Resumen ===")
     print(f"  Key pair:         {KEY_NAME}")
     print(f"  Security group:   {SG_NAME} ({sg_id})")
@@ -262,10 +286,11 @@ def main():
     print(f"  Instancia:        {iid}")
     print(f"  awslocal ec2 terminate-instances --instance-ids {iid}")
 
-
+    # Lista las instancias activas para verificar el resultado.
     print("\n6. listar instancias EC2 existentes")
     list_instances(ec2)
 
+    # Termina la instancia creada al finalizar la demostración.
     print("\n7. terminar instancia creada")
     terminate_instance(ec2, iid)
 

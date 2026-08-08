@@ -1,8 +1,4 @@
-"""
-    
-"""
-
-
+"""Provisiona recursos IAM para el proyecto con grupos, usuarios, roles y políticas."""
 
 import sys
 from typing import Any, Dict
@@ -11,11 +7,13 @@ from pathlib import Path
 from aws_client import make_client
 
 
+# Directorio del proyecto que contiene los archivos JSON de políticas IAM.
 IAM_DIR = Path(__file__).parent.parent / "iam"
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _already_exists(e: ClientError) -> bool:
+    """Indica si el error corresponde a un recurso IAM que ya existe."""
     code = e.response["Error"].get("Code", "")
     message = e.response["Error"].get("Message", "")
     return (
@@ -28,6 +26,7 @@ def _already_exists(e: ClientError) -> bool:
 
 
 def _normalize_policy_sources(policy_sources):
+    """Normaliza las fuentes de políticas a una lista de rutas o ARNs."""
     if policy_sources is None:
         return []
     if isinstance(policy_sources, (str, Path)):
@@ -36,6 +35,7 @@ def _normalize_policy_sources(policy_sources):
 
 
 def create_group(iam, group: str ):
+    """Crea un grupo IAM o reutiliza el existente si ya está presente."""
     try:
         iam.create_group(GroupName=group)
         print(f"  grupo '{group}' creado")
@@ -48,12 +48,7 @@ def create_group(iam, group: str ):
 
 
 def attach_policies_to_group(iam, group: str, policy_sources) -> list:
-    """Attach policies to a group.
-
-    `policy_sources` puede contener ARNs (strings que empiezan con 'arn:')
-    o paths a archivos JSON relativos a `IAM_DIR`.
-    Devuelve la lista de policy ARNs adjuntadas.
-    """
+    """Adjunta políticas a un grupo IAM desde ARNs o archivos JSON."""
     attached_arns = []
     for src in _normalize_policy_sources(policy_sources):
         if isinstance(src, str) and src.startswith("arn:"):
@@ -87,7 +82,7 @@ def attach_policies_to_group(iam, group: str, policy_sources) -> list:
 
 
 def create_user(iam,username, group: str):
-  
+    """Crea un usuario IAM, lo agrega a un grupo y genera una access key."""
     try:
         iam.create_user(UserName=username)
         print(f"  usuario '{username}' creado")
@@ -212,7 +207,7 @@ def create_role(
 
 
 def policy_has_s3(doc: Dict[str, Any]) -> bool:
-    """Return True if the policy document grants S3-related actions or resources."""
+    """Indica si la política autoriza acciones o recursos relacionados con S3."""
     stmts = doc.get("Statement", [])
     if isinstance(stmts, dict):
         stmts = [stmts]
@@ -233,6 +228,7 @@ def policy_has_s3(doc: Dict[str, Any]) -> bool:
 
 
 def get_managed_policy_document(iam, policy_arn: str):
+    """Obtiene el documento de una política administrada de IAM."""
     try:
         pol = iam.get_policy(PolicyArn=policy_arn)["Policy"]
         ver = iam.get_policy_version(PolicyArn=policy_arn, VersionId=pol["DefaultVersionId"])
@@ -242,6 +238,7 @@ def get_managed_policy_document(iam, policy_arn: str):
 
 
 def inspect_groups(iam):
+    """Muestra los grupos IAM y sus políticas asociadas."""
     print("\n=== Groups ===")
     for g in iam.list_groups().get("Groups", []):
         name = g["GroupName"]
@@ -267,6 +264,7 @@ def inspect_groups(iam):
 
 
 def inspect_roles(iam):
+    """Muestra los roles IAM y sus políticas adjuntas e inline."""
     print("\n=== Roles ===")
     for r in iam.list_roles().get("Roles", []):
         name = r["RoleName"]
@@ -286,6 +284,7 @@ def inspect_roles(iam):
 
 
 def inspect_policies(iam):
+    """Muestra las políticas administradas locales del entorno."""
     print("\n=== Managed policies (Local scope) ===")
     for p in iam.list_policies(Scope="Local").get("Policies", []):
         print(f"- {p['PolicyName']} ({p['Arn']})")
@@ -389,62 +388,60 @@ def cleanup_resources(iam):
 # ── main ──────────────────────────────────────────────────────────────────────
 
 def main():
+    """Orquesta la creación y verificación de recursos IAM del proyecto."""
 
-
+    # Inicializa el cliente de IAM para interactuar con AWS o LocalStack.
     iam = make_client("iam")
 
+    # Limpia recursos IAM previos antes de crear los nuevos.
     cleanup_resources(iam)
 
+    # Crea el grupo de administradores y les asigna políticas de acceso amplio.
     print("\n2. Grupo + policies")
-
     print("\n Perfil: Administradores Cloud")
-    group_infra_admins = create_group(iam,"group_infra_admins")
-    policy_arns = attach_policies_to_group(iam, group_infra_admins, [IAM_DIR / "s3_admin_policy.json"])
-    policy_arns = attach_policies_to_group(iam, group_infra_admins, [IAM_DIR / "ec2_full_access_policy.json"])
-    user_pedro = create_user(iam,"pedro_admin" , group_infra_admins)
+    group_infra_admins = create_group(iam, "group_infra_admins")
+    attach_policies_to_group(iam, group_infra_admins, [IAM_DIR / "s3_admin_policy.json"])
+    attach_policies_to_group(iam, group_infra_admins, [IAM_DIR / "ec2_full_access_policy.json"])
+    create_user(iam, "pedro_admin", group_infra_admins)
 
-
+    # Crea el grupo de desarrolladores y les asigna permisos de lectura.
     print("\n  Perfil: Desarrolladores de app")
-    group_dev_apps = create_group(iam,"group_devs_app")
-    policy_arns = attach_policies_to_group(iam, group_dev_apps, [IAM_DIR / "s3_read_policy.json"])
-    policy_arns = attach_policies_to_group(iam, group_dev_apps, [IAM_DIR / "ec2_read_operations_policy.json"])
-    user_nacho = create_user(iam,"nacho_dev" , group_dev_apps)
-    user_mariano = create_user(iam,"mariano_dev" , group_dev_apps)
+    group_dev_apps = create_group(iam, "group_devs_app")
+    attach_policies_to_group(iam, group_dev_apps, [IAM_DIR / "s3_read_policy.json"])
+    attach_policies_to_group(iam, group_dev_apps, [IAM_DIR / "ec2_read_operations_policy.json"])
+    create_user(iam, "nacho_dev", group_dev_apps)
+    create_user(iam, "mariano_dev", group_dev_apps)
 
-    print("\n Perfil: DBAs") 
-    group_dba = create_group(iam,"group_dba")
-    policy_arns = attach_policies_to_group(iam, group_dba, [IAM_DIR / "db_on_ec2_admin_policy.json"])
-    user_pedro = create_user(iam,"pedro_dba" , group_dba)
- 
+    # Crea el grupo de DBAs con permisos de administración sobre la base de datos.
+    print("\n Perfil: DBAs")
+    group_dba = create_group(iam, "group_dba")
+    attach_policies_to_group(iam, group_dba, [IAM_DIR / "db_on_ec2_admin_policy.json"])
+    create_user(iam, "pedro_dba", group_dba)
 
-    # Perfil: Server app y S3
-
+    # Crea el rol para la aplicación EC2 con permisos de lectura/escritura sobre S3 y secretos.
     print("\n4. Rol con trust policy (EC2 app) + policies adjuntas")
-    role_name_app, role_arn_app = create_role(
+    create_role(
         iam,
         role_name="role-app-api-backup-repository",
         trust_policy_path="trust_policy.json",
-        attached_policy_sources=[IAM_DIR / "s3_read_policy.json",
-                                 IAM_DIR / "s3_write_policy.json",
-                                 IAM_DIR / "sm_read_secret_db.json"],
-                                 
+        attached_policy_sources=[
+            IAM_DIR / "s3_read_policy.json",
+            IAM_DIR / "s3_write_policy.json",
+            IAM_DIR / "sm_read_secret_db.json",
+        ],
     )
 
-
-    # Perfil: Server DB y S3
-
+    # Crea el rol para la base de datos EC2 con permisos específicos de backup sobre S3.
     print("\n5. Rol con trust policy (EC2 DB) + policies adjuntas")
-    role_name_db, role_arn_db = create_role(
+    create_role(
         iam,
         role_name="role-db-api-backup-repository",
         trust_policy_path="trust_policy.json",
-        attached_policy_sources=[IAM_DIR / "s3_upload_backup_db_policy.json" ]
-                                 
+        attached_policy_sources=[IAM_DIR / "s3_upload_backup_db_policy.json"],
     )
 
+    # Muestra un resumen de los recursos creados para verificar el resultado.
     print("\n=== Resumen de recursos creados ===")
-
-
     inspect_groups(iam)
     inspect_roles(iam)
     inspect_policies(iam)

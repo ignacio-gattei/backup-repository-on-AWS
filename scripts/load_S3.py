@@ -19,19 +19,24 @@ from pathlib import Path
 from aws_client import make_client
 
 
+# Ruta raíz del proyecto para localizar directorios auxiliares.
 ROOT = Path(__file__).parent.parent
+# Carpeta con los archivos de datos que se cargarán al bucket.
 DATA_DIR = ROOT / "data"
+# Carpeta con los recursos y políticas específicas de S3 del proyecto.
 S3_DIR = ROOT / "s3"
 
+# Nombre del bucket que almacenará archivos de la API y del repositorio.
 BUCKET_API_FILE_REPO = "bucket-api-file-repo"
+# Nombre del bucket usado para guardar backups de la base de datos.
 BUCKET_DB_BACKUPS = "bucket-db-backups"
-
 
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _exists_error(s3, bucket_name: str) -> bool:
+    """Indica si un bucket existe o si el error corresponde a un bucket ya presente."""
     try:
         s3.head_bucket(Bucket=bucket_name)
         return True
@@ -46,6 +51,7 @@ def _exists_error(s3, bucket_name: str) -> bool:
 
 
 def create_bucket(s3, bucket_name):
+    """Crea un bucket S3 o informa si ya existe."""
     if _exists_error(s3, bucket_name):
         print(f"  bucket '{bucket_name}' ya existe")
         return
@@ -55,7 +61,7 @@ def create_bucket(s3, bucket_name):
   
 
 def harden_bucket(s3, bucket_name):
-    """Cerrado por defecto: Block Public Access ON + cifrado SSE-S3."""
+    """Aplica configuraciones de seguridad al bucket."""
     s3.put_public_access_block(
         Bucket=bucket_name,
         PublicAccessBlockConfiguration={
@@ -80,6 +86,7 @@ def harden_bucket(s3, bucket_name):
 
 
 def enable_versioning(s3, bucket_name):
+    """Habilita el versionado de objetos en el bucket."""
     s3.put_bucket_versioning(
         Bucket=bucket_name,
         VersioningConfiguration={"Status": "Enabled"},
@@ -102,7 +109,7 @@ def list_buckets(s3):
 
 
 def delete_bucket(s3, bucket_name: str) -> None:
-    """Elimina un bucket de forma forzada, incluso si tiene objetos."""
+    """Elimina un bucket de forma forzada, incluso si contiene objetos o versiones."""
     if not _exists_error(s3, bucket_name):
         print(f"  bucket '{bucket_name}' no existe")
         return
@@ -135,9 +142,7 @@ def delete_bucket(s3, bucket_name: str) -> None:
 
 
 def upload_file(s3, filename=None, bucket_name=None):
-    """Sube uno o varios archivos de data al bucket.
-    Es idempotente: salta archivos que ya están en el bucket (compara por size).
-    """
+    """Sube archivos de datos al bucket de forma idempotente."""
     uploads, skipped = [], 0
 
     def upload_if_different(local_path, key):
@@ -180,33 +185,15 @@ def upload_file(s3, filename=None, bucket_name=None):
 
 
 def apply_bucket_policy(s3, bucket_name):
+    """Aplica la política de acceso del bucket para restringir el acceso."""
     policy = (S3_DIR / "bucket_policy.json").read_text()
     s3.put_bucket_policy(Bucket=bucket_name, Policy=policy)
     print("  bucket policy aplicada: GetObject + ListBucket para app-role sobre raw/* y processed/*")
 
 
-def assume_role_and_download(sts, bucket_name,RoleArn):
-    print("  asumiendo rol app-role...")
-    creds = sts.assume_role(
-        RoleArn=RoleArn,
-        RoleSessionName="lab06-download",
-        DurationSeconds=900,
-    )["Credentials"]
-    print(f"  creds temporales obtenidas (expiran: {creds['Expiration']})")
-
-    s3_assumed = make_client(
-        "s3",
-        aws_access_key_id=creds["AccessKeyId"],
-        aws_secret_access_key=creds["SecretAccessKey"],
-        aws_session_token=creds["SessionToken"],
-    )
-    key = "raw/olist/customers.csv"
-    head = s3_assumed.head_object(Bucket=bucket_name, Key=key)
-    print(f"  GetObject como app-role: '{key}' OK ({head['ContentLength']:,} bytes)")
-
 
 def presigned_url(s3, key=None, bucket_name=None):
-    """Genera una URL prefirmada para descargar un objeto específico de S3."""
+    """Genera una URL prefirmada para acceder temporalmente a un objeto."""
 
     url = s3.generate_presigned_url(
         "get_object",
@@ -246,6 +233,7 @@ def download_file(s3, key, destination=None, bucket_name=None):
 
 
 def summary(s3, bucket_name=None):
+    """Muestra un resumen de objetos, versiones y tamaño del bucket."""
     objects = s3.list_objects_v2(Bucket=bucket_name).get("Contents", [])
     versions = s3.list_object_versions(Bucket=bucket_name).get("Versions", [])
     total_size = sum(o["Size"] for o in objects) / (1024 * 1024)
@@ -259,24 +247,28 @@ def summary(s3, bucket_name=None):
 # ── main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    print("=== Creamos buckets S3 para backups ===\n")
+    """Orquesta la creación y configuración de los buckets S3 del proyecto."""
 
+    # Inicializa el cliente de S3 para interactuar con AWS o LocalStack.
     s3 = make_client("s3")
 
+    # Elimina los buckets previos para evitar conflictos al reejecutar el script.
     delete_bucket(s3, BUCKET_API_FILE_REPO)
     delete_bucket(s3, BUCKET_DB_BACKUPS)
 
-
+    # Crea y hardeniza el bucket destinado a archivos de la API y el repositorio.
     print("\n=== Bucket para guardar archivos backup de la coorporacion  ===")
     create_bucket(s3, BUCKET_API_FILE_REPO)
     harden_bucket(s3, BUCKET_API_FILE_REPO)
     enable_versioning(s3, BUCKET_API_FILE_REPO)
- 
+
+    # Crea y hardeniza el bucket destinado a backups de la base de datos.
     print("\n=== Bucket para guardar backups de la DB de la APP  (Api Backup) ===")
     create_bucket(s3, BUCKET_DB_BACKUPS)
     harden_bucket(s3, BUCKET_DB_BACKUPS)
     enable_versioning(s3, BUCKET_DB_BACKUPS)
 
+    # Muestra el resultado final de la creación de buckets.
     print("\n=== Listamos todos los buckets creados ===")
     list_buckets(s3)
 
