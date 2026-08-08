@@ -9,12 +9,9 @@ from typing import Any, Dict
 from botocore.exceptions import ClientError
 from pathlib import Path
 from aws_client import make_client
-from load_S3 import create_bucket
 
 
-BUCKET = "file-backup-repo"
 IAM_DIR = Path(__file__).parent.parent / "iam"
-
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -213,33 +210,6 @@ def create_role(
     return role_name, role_arn
 
 
-def assume_role_and_use_s3(sts, role_arn: str):
-    print(f"\n  asumiendo rol: {role_arn}")
-    resp = sts.assume_role(
-        RoleArn=role_arn,
-        RoleSessionName="lab04-session",
-        DurationSeconds=900,
-    )
-    creds = resp["Credentials"]
-    print(f"  AccessKeyId:  {creds['AccessKeyId']}")
-    print(f"  Expiration:   {creds['Expiration']}  ← credencial temporal")
-
-    # usar las credenciales temporales para acceder a S3
-    s3_temp = make_client(
-        "s3",
-        aws_access_key_id=creds["AccessKeyId"],
-        aws_secret_access_key=creds["SecretAccessKey"],
-        aws_session_token=creds["SessionToken"],
-    )
-
-    objects = s3_temp.list_objects_v2(Bucket=BUCKET).get("Contents", [])
-    print(f"  objetos en '{BUCKET}' con credenciales temporales:")
-    for obj in objects:
-        print(f"    - {obj['Key']} ({obj['Size']} bytes)")
-
-    return creds
-
-
 
 def policy_has_s3(doc: Dict[str, Any]) -> bool:
     """Return True if the policy document grants S3-related actions or resources."""
@@ -324,33 +294,9 @@ def inspect_policies(iam):
             print(f"  S3-related: {policy_has_s3(doc)}")
 
 
-def cleanup_resources(iam, s3, bucket: str = BUCKET):
-    """Delete the IAM resources and S3 bucket created by this demo."""
-    print("\n=== Cleanup de recursos ===")
-
-    # S3 cleanup
-    try:
-        objects = s3.list_objects_v2(Bucket=bucket).get("Contents", [])
-        if objects:
-            s3.delete_objects(
-                Bucket=bucket,
-                Delete={"Objects": [{"Key": obj["Key"]} for obj in objects]},
-            )
-        versions = s3.list_object_versions(Bucket=bucket)
-        version_items = []
-        for item in versions.get("Versions", []):
-            version_items.append({"Key": item["Key"], "VersionId": item["VersionId"]})
-        for item in versions.get("DeleteMarkers", []):
-            version_items.append({"Key": item["Key"], "VersionId": item["VersionId"]})
-        if version_items:
-            s3.delete_objects(Bucket=bucket, Delete={"Objects": version_items})
-        s3.delete_bucket(Bucket=bucket)
-        print(f"  bucket '{bucket}' eliminado")
-    except ClientError as e:
-        if "NoSuchBucket" in str(e) or "NotFound" in str(e):
-            print(f"  bucket '{bucket}' ya no existe")
-        else:
-            print(f"  no se pudo eliminar el bucket '{bucket}': {e}")
+def cleanup_resources(iam):
+    """Elimina únicamente los recursos IAM creados por este demo."""
+    print("\n=== Cleanup de recursos IAM ===")
 
     # Remove users from groups and delete them
     for user in iam.list_users().get("Users", []):
@@ -446,14 +392,8 @@ def main():
 
 
     iam = make_client("iam")
-    s3 = make_client("s3")
-    sts = make_client("sts")
 
-    cleanup_resources(iam, s3)
-
-
-    print("1. Bucket S3")
-    create_bucket(s3)
+    cleanup_resources(iam)
 
     print("\n2. Grupo + policies")
 
@@ -479,7 +419,7 @@ def main():
 
     # Perfil: Server app y S3
 
-    print("\n4. Rol con trust policy (EC2) + policies adjuntas")
+    print("\n4. Rol con trust policy (EC2 app) + policies adjuntas")
     role_name_app, role_arn_app = create_role(
         iam,
         role_name="role-app-api-backup-repository",
@@ -490,6 +430,17 @@ def main():
                                  
     )
 
+
+    # Perfil: Server DB y S3
+
+    print("\n5. Rol con trust policy (EC2 DB) + policies adjuntas")
+    role_name_db, role_arn_db = create_role(
+        iam,
+        role_name="role-db-api-backup-repository",
+        trust_policy_path="trust_policy.json",
+        attached_policy_sources=[IAM_DIR / "s3_upload_backup_db_policy.json" ]
+                                 
+    )
 
     print("\n=== Resumen de recursos creados ===")
 

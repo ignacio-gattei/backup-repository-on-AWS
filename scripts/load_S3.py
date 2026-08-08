@@ -23,34 +23,41 @@ ROOT = Path(__file__).parent.parent
 DATA_DIR = ROOT / "data"
 S3_DIR = ROOT / "s3"
 
-BUCKET = "file-repo"
-ROLE_ARN = "arn:aws:iam::000000000000:role/app-role"
+BUCKET_API_FILE_REPO = "bucket-api-file-repo"
+BUCKET_DB_BACKUPS = "bucket-db-backups"
+
+
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
-def _exists_error(e: ClientError) -> bool:
-    code = e.response["Error"].get("Code", "")
-    return code in ("BucketAlreadyOwnedByYou", "BucketAlreadyExists")
-
-
-# ── pasos ─────────────────────────────────────────────────────────────────────
-
-def create_bucket(s3):
+def _exists_error(s3, bucket_name: str) -> bool:
     try:
-        s3.create_bucket(Bucket=BUCKET)
-        print(f"  bucket '{BUCKET}' creado")
+        s3.head_bucket(Bucket=bucket_name)
+        return True
     except ClientError as e:
-        if _exists_error(e):
-            print(f"  bucket '{BUCKET}' ya existe")
-        else:
-            raise
+        code = e.response.get("Error", {}).get("Code", "")
+        message = str(e).lower()
+        if code in ("404", "NoSuchBucket", "NotFound", "404 Not Found"):
+            return False
+        return code in ("BucketAlreadyOwnedByYou", "BucketAlreadyExists", "Conflict") or any(
+            token in message for token in ("already exists", "already owned by you")
+        )
 
 
-def harden_bucket(s3):
+def create_bucket(s3, bucket_name):
+    if _exists_error(s3, bucket_name):
+        print(f"  bucket '{bucket_name}' ya existe")
+        return
+
+    s3.create_bucket(Bucket=bucket_name)
+    print(f"  bucket '{bucket_name}' creado")
+  
+
+def harden_bucket(s3, bucket_name):
     """Cerrado por defecto: Block Public Access ON + cifrado SSE-S3."""
     s3.put_public_access_block(
-        Bucket=BUCKET,
+        Bucket=bucket_name,
         PublicAccessBlockConfiguration={
             "BlockPublicAcls": True,
             "IgnorePublicAcls": True,
@@ -61,7 +68,7 @@ def harden_bucket(s3):
     print("  Block Public Access: ON (4 flags)")
 
     s3.put_bucket_encryption(
-        Bucket=BUCKET,
+        Bucket=bucket_name,
         ServerSideEncryptionConfiguration={
             "Rules": [{
                 "ApplyServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"},
@@ -72,16 +79,62 @@ def harden_bucket(s3):
     print("  Encryption: SSE-S3 (AES256) por defecto")
 
 
-def enable_versioning(s3):
+def enable_versioning(s3, bucket_name):
     s3.put_bucket_versioning(
-        Bucket=BUCKET,
+        Bucket=bucket_name,
         VersioningConfiguration={"Status": "Enabled"},
     )
-    status = s3.get_bucket_versioning(Bucket=BUCKET).get("Status", "Disabled")
+    status = s3.get_bucket_versioning(Bucket=bucket_name).get("Status", "Disabled")
     print(f"  Versioning: {status}")
 
 
-def upload_file(s3, filename=None):
+def list_buckets(s3):
+    """Lista todos los buckets existentes en la cuenta."""
+    response = s3.list_buckets()
+    buckets = response.get("Buckets", [])
+    if not buckets:
+        print("  No hay buckets creados")
+        return []
+
+    for bucket in buckets:
+        print(f"  - {bucket['Name']}")
+    return buckets
+
+
+def delete_bucket(s3, bucket_name: str) -> None:
+    """Elimina un bucket de forma forzada, incluso si tiene objetos."""
+    if not _exists_error(s3, bucket_name):
+        print(f"  bucket '{bucket_name}' no existe")
+        return
+
+    try:
+        objects = s3.list_objects_v2(Bucket=bucket_name).get("Contents", [])
+        for obj in objects:
+            s3.delete_object(Bucket=bucket_name, Key=obj["Key"])
+
+        versions = s3.list_object_versions(Bucket=bucket_name).get("Versions", [])
+        for version in versions:
+            s3.delete_object(
+                Bucket=bucket_name,
+                Key=version["Key"],
+                VersionId=version.get("VersionId"),
+            )
+
+        delete_markers = s3.list_object_versions(Bucket=bucket_name).get("DeleteMarkers", [])
+        for marker in delete_markers:
+            s3.delete_object(
+                Bucket=bucket_name,
+                Key=marker["Key"],
+                VersionId=marker.get("VersionId"),
+            )
+
+        s3.delete_bucket(Bucket=bucket_name)
+        print(f"  bucket '{bucket_name}' eliminado de forma forzada")
+    except ClientError as e:
+        raise
+
+
+def upload_file(s3, filename=None, bucket_name=None):
     """Sube uno o varios archivos de data al bucket.
     Es idempotente: salta archivos que ya están en el bucket (compara por size).
     """
@@ -90,13 +143,13 @@ def upload_file(s3, filename=None):
     def upload_if_different(local_path, key):
         nonlocal skipped
         try:
-            head = s3.head_object(Bucket=BUCKET, Key=key)
+            head = s3.head_object(Bucket=bucket_name, Key=key)
             if head["ContentLength"] == local_path.stat().st_size:
                 skipped += 1
                 return None
         except ClientError:
             pass
-        s3.upload_file(str(local_path), BUCKET, key)
+        s3.upload_file(str(local_path), bucket_name, key)
         return (key, local_path.stat().st_size)
 
     files_to_upload = []
@@ -125,34 +178,17 @@ def upload_file(s3, filename=None):
         print(f"  {skipped} objetos ya estaban en S3 (skip)")
 
 
-def demo_versioning(s3):
-    """Sobreescribe un archivo para mostrar que versioning preserva la anterior."""
-    key = "raw/olist/orders.csv"
 
-    # Versión "actualizada" (agregamos una línea ficticia de "data del día")
-    original = s3.get_object(Bucket=BUCKET, Key=key)["Body"].read()
-    new_content = original + b"\nNEW_ORDER_2026_FICTICIO,99999,delivered,2026-06-18,2026-06-19,2026-06-25,,\n"
-    s3.put_object(Bucket=BUCKET, Key=key, Body=new_content)
-    print(f"  sobrescrito: {key} (+1 fila ficticia)")
-
-    # Listar versiones
-    versions = s3.list_object_versions(Bucket=BUCKET, Prefix=key).get("Versions", [])
-    print(f"  versiones de '{key}': {len(versions)}")
-    for v in versions[:3]:
-        marker = " ← actual" if v["IsLatest"] else ""
-        print(f"    - VersionId={v['VersionId'][:16]}... Size={v['Size']:,}{marker}")
-
-
-def apply_bucket_policy(s3):
+def apply_bucket_policy(s3, bucket_name):
     policy = (S3_DIR / "bucket_policy.json").read_text()
-    s3.put_bucket_policy(Bucket=BUCKET, Policy=policy)
+    s3.put_bucket_policy(Bucket=bucket_name, Policy=policy)
     print("  bucket policy aplicada: GetObject + ListBucket para app-role sobre raw/* y processed/*")
 
 
-def assume_role_and_download(sts):
+def assume_role_and_download(sts, bucket_name,RoleArn):
     print("  asumiendo rol app-role...")
     creds = sts.assume_role(
-        RoleArn=ROLE_ARN,
+        RoleArn=RoleArn,
         RoleSessionName="lab06-download",
         DurationSeconds=900,
     )["Credentials"]
@@ -165,16 +201,16 @@ def assume_role_and_download(sts):
         aws_session_token=creds["SessionToken"],
     )
     key = "raw/olist/customers.csv"
-    head = s3_assumed.head_object(Bucket=BUCKET, Key=key)
+    head = s3_assumed.head_object(Bucket=bucket_name, Key=key)
     print(f"  GetObject como app-role: '{key}' OK ({head['ContentLength']:,} bytes)")
 
 
-def presigned_url(s3, key=None):
+def presigned_url(s3, key=None, bucket_name=None):
     """Genera una URL prefirmada para descargar un objeto específico de S3."""
 
     url = s3.generate_presigned_url(
         "get_object",
-        Params={"Bucket": BUCKET, "Key": key},
+        Params={"Bucket": bucket_name, "Key": key},
         ExpiresIn=300,
     )
     print(f"  presigned URL para '{key}' (válida 5 min):")
@@ -182,7 +218,7 @@ def presigned_url(s3, key=None):
     return url
 
 
-def list_files(s3, bucket=BUCKET):
+def list_files(s3, bucket=None):
     """Lista todos los archivos (objetos) del bucket."""
     paginator = s3.get_paginator("list_objects_v2")
     files = []
@@ -197,21 +233,21 @@ def list_files(s3, bucket=BUCKET):
     return files
 
 
-def download_file(s3, key, destination=None):
+def download_file(s3, key, destination=None, bucket_name=None):
     """Descarga un objeto de S3 a un archivo local."""
     if destination is None:
         destination = DATA_DIR / "downloads" / Path(key).name
 
     destination_path = Path(destination)
     destination_path.parent.mkdir(parents=True, exist_ok=True)
-    s3.download_file(BUCKET, key, str(destination_path))
+    s3.download_file(bucket_name, key, str(destination_path))
     print(f"  archivo descargado: {key} -> {destination_path}")
     return str(destination_path)
 
 
-def summary(s3):
-    objects = s3.list_objects_v2(Bucket=BUCKET).get("Contents", [])
-    versions = s3.list_object_versions(Bucket=BUCKET).get("Versions", [])
+def summary(s3, bucket_name=None):
+    objects = s3.list_objects_v2(Bucket=bucket_name).get("Contents", [])
+    versions = s3.list_object_versions(Bucket=bucket_name).get("Versions", [])
     total_size = sum(o["Size"] for o in objects) / (1024 * 1024)
     print(f"  objetos:   {len(objects)}")
     print(f"  versiones: {len(versions)} (incluye sobreescritas)")
@@ -223,46 +259,26 @@ def summary(s3):
 # ── main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    print("=== Lab 06 — S3 data lake + cierre IAM → EC2 → S3 ===\n")
+    print("=== Creamos buckets S3 para backups ===\n")
 
     s3 = make_client("s3")
-    #sts = make_client("sts")
 
-    print("1. Bucket")
-    create_bucket(s3)
+    delete_bucket(s3, BUCKET_API_FILE_REPO)
+    delete_bucket(s3, BUCKET_DB_BACKUPS)
 
-    print("\n2. Hardening por defecto (BPA + encryption)")
-    harden_bucket(s3)
 
-    print("\n3. Versioning")
-    enable_versioning(s3)
+    print("\n=== Bucket para guardar archivos backup de la coorporacion  ===")
+    create_bucket(s3, BUCKET_API_FILE_REPO)
+    harden_bucket(s3, BUCKET_API_FILE_REPO)
+    enable_versioning(s3, BUCKET_API_FILE_REPO)
+ 
+    print("\n=== Bucket para guardar backups de la DB de la APP  (Api Backup) ===")
+    create_bucket(s3, BUCKET_DB_BACKUPS)
+    harden_bucket(s3, BUCKET_DB_BACKUPS)
+    enable_versioning(s3, BUCKET_DB_BACKUPS)
 
-    print("\n4. Upload file")
-    upload_file(s3, filename="file1.csv")
-
-    #print("\n5. Demo versioning (sobrescribir orders.csv)")
-    #demo_versioning(s3)
-
-    #print("\n6. Bucket policy: solo app-role puede leer")
-    #apply_bucket_policy(s3)
-
-    #print("\n7. AssumeRole + GetObject — cierre del círculo")
-    #assume_role_and_download(sts)
-
-    #print("\n8. Presigned URL — acceso temporario sin asumir rol")
-    #presigned_url(s3)
-
-    print("\n=== Resumen final ===")
-    summary(s3)
-
-    print("\n=== Listar archivos ===")
-    list_files(s3)
-
-    print("\n=== Descargar archivo ===")
-    download_file(s3, key="files/file1.csv")
-
-    print("\n=== URL prefirmada ===")
-    presigned_url(s3, key="files/file1.csv")
+    print("\n=== Listamos todos los buckets creados ===")
+    list_buckets(s3)
 
 
 if __name__ == "__main__":
