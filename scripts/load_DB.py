@@ -21,7 +21,7 @@ ROOT = Path(__file__).parent.parent
 EC2_DIR = ROOT / "ec2"
 
 KEY_NAME = "key-ec2-db"
-DB_INSTANCE_TAG = "db-api-repo-backup-on-ec2"
+DB_INSTANCE_TAG = "db-on-ec2-api-repo-backup"
 DB_SECURITY_GROUP_NAME = "sg-db-api-backup-repository"
 DB_SUBNET_NAME = "subnet-DB"
 DB_SECRET_NAME = "secret-db-api-repo-backup"
@@ -61,7 +61,7 @@ def create_key_pair(ec2) -> None:
             raise
 
 
-def create_secret(sm, endpoint: str) -> str:
+def create_secret(sm, secret_name: str, endpoint: str) -> str:
     """Crea o reutiliza el secret de la base de datos y devuelve la password."""
     payload = {
         "username": DB_USERNAME,
@@ -72,19 +72,19 @@ def create_secret(sm, endpoint: str) -> str:
     }
     try:
         sm.create_secret(
-            Name=DB_SECRET_NAME,
+            Name=secret_name,
             Description="Credenciales de PostgreSQL sobre EC2 para Backup Repository",
             SecretString=json.dumps(payload),
         )
-        print(f"  secret '{DB_SECRET_NAME}' creado (password generada)")
+        print(f"  secret '{secret_name}' creado (password generada)")
         return payload["password"]
     except ClientError as e:
         if not _already_exists(e):
             raise
 
-    secret_value = sm.get_secret_value(SecretId=DB_SECRET_NAME)
+    secret_value = sm.get_secret_value(SecretId=secret_name)
     existing_payload = json.loads(secret_value["SecretString"])
-    print(f"  secret '{DB_SECRET_NAME}' ya existe — reuso password")
+    print(f"  secret '{secret_name}' ya existe — reuso password")
     return existing_payload["password"]
 
 
@@ -239,7 +239,7 @@ def main() -> None:
     print("\n3. Obtener subred dedicada a la DB")
     subnet_id = get_private_subnet_id(ec2, vpc_id, subnet_name=DB_SUBNET_NAME)
     endpoint = get_subnet_endpoint(ec2, subnet_id)
-    password = create_secret(sm, endpoint)
+    password = create_secret(sm, DB_SECRET_NAME, endpoint)
     print(f"  subred de DB: {subnet_id}")
 
     print("\n4. Crear o recuperar PostgreSQL sobre EC2")

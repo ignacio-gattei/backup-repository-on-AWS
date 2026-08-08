@@ -1,0 +1,36 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "AllowGlobalDescribe",
+            "Effect": "Allow",
+            "Action": [
+                "ec2:Describe*",
+                "ssm:DescribeSessions",
+                "ssm:GetConnectionStatus",
+                "ssm:DescribeInstanceInformation"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "FullControlAndSSMAccess",
+            "Effect": "Allow",
+            "Action": [
+                "ec2:StartInstances",
+                "ec2:StopInstances",
+                "ec2:RebootInstances",
+                "ec2:TerminateInstances",
+                "ec2:ModifyInstanceAttribute",
+                "ssm:StartSession",
+                "ssm:TerminateSession",
+                "ssm:ResumeSession"
+            ],
+            "Resource": "arn:aws:ec2:*:*:instance/*",
+            "Condition": {
+                "StringEquals": {
+                    "aws:ResourceTag/Name": "db-on-ec2-api-repo-backup"
+                }
+            }
+        }
+   ]
+}

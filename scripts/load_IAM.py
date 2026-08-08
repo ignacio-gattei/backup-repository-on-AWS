@@ -457,30 +457,37 @@ def main():
 
     print("\n2. Grupo + policies")
 
-    # Perfil: Administradores Cloud
+    print("\n Perfil: Administradores Cloud")
     group_infra_admins = create_group(iam,"group_infra_admins")
     policy_arns = attach_policies_to_group(iam, group_infra_admins, [IAM_DIR / "s3_admin_policy.json"])
     policy_arns = attach_policies_to_group(iam, group_infra_admins, [IAM_DIR / "ec2_full_access_policy.json"])
     user_pedro = create_user(iam,"pedro_admin" , group_infra_admins)
 
 
-    # Perfil: Desarrolladores de app
+    print("\n  Perfil: Desarrolladores de app")
     group_dev_apps = create_group(iam,"group_devs_app")
     policy_arns = attach_policies_to_group(iam, group_dev_apps, [IAM_DIR / "s3_read_policy.json"])
     policy_arns = attach_policies_to_group(iam, group_dev_apps, [IAM_DIR / "ec2_read_operations_policy.json"])
     user_nacho = create_user(iam,"nacho_dev" , group_dev_apps)
     user_mariano = create_user(iam,"mariano_dev" , group_dev_apps)
 
+    print("\n Perfil: DBAs") 
+    group_dba = create_group(iam,"group_dba")
+    policy_arns = attach_policies_to_group(iam, group_dba, [IAM_DIR / "db_on_ec2_admin_policy.json"])
+    user_pedro = create_user(iam,"pedro_dba" , group_dba)
+ 
 
     # Perfil: Server app y S3
 
     print("\n4. Rol con trust policy (EC2) + policies adjuntas")
-    role_name, role_arn = create_role(
+    role_name_app, role_arn_app = create_role(
         iam,
-        role_name="role-api-backup-repository",
+        role_name="role-app-api-backup-repository",
         trust_policy_path="trust_policy.json",
         attached_policy_sources=[IAM_DIR / "s3_read_policy.json",
-                                 IAM_DIR / "s3_write_policy.json"],
+                                 IAM_DIR / "s3_write_policy.json",
+                                 IAM_DIR / "sm_read_secret_db.json"],
+                                 
     )
 
 

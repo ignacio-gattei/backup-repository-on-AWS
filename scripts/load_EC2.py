@@ -26,10 +26,10 @@ ROOT = Path(__file__).parent.parent
 EC2_DIR = ROOT / "ec2"
 
 KEY_NAME = "ec2-key-01"
-SG_NAME = "api-backup-repository-sg"
-ROLE_NAME = "api-backup-repository-role"  
-INSTANCE_PROFILE = "api-backup-repository-instance-profile"
-INSTANCE_TAG = "api-backup-repository-ec2-01"
+SG_NAME = "sg-api-backup-repository"
+ROLE_NAME = "role-app-api-backup-repository"  
+INSTANCE_PROFILE = "instance-profile-api-backup-repository"
+INSTANCE_TAG = "ec2-api-backup-repository-01"
 AMI_ID = "ami-0c02fb55956c7d316"
 INSTANCE_TYPE = "t3.micro"
 
@@ -90,8 +90,6 @@ def get_private_subnet_id(ec2, vpc_id: str, subnet_name: str) -> str:
     return subnet["SubnetId"]
 
 
-# ── pasos ─────────────────────────────────────────────────────────────────────
-
 def create_key_pair(ec2):
     try:
         resp = ec2.create_key_pair(KeyName=KEY_NAME)
@@ -120,7 +118,7 @@ def run_instance(ec2, sg_id: str, subnet_id: str):
         IamInstanceProfile={"Name": INSTANCE_PROFILE},
         TagSpecifications=[{
             "ResourceType": "instance",
-            "Tags": [{"Key": "Name", "Value": INSTANCE_TAG}, {"Key": "Lab", "Value": "05"}],
+            "Tags": [{"Key": "Name", "Value": INSTANCE_TAG}],
         }],
     )
     instance = resp["Instances"][0]
@@ -144,21 +142,65 @@ def describe_instance(ec2, iid: str):
 
 
 def list_instances(ec2):
-    """Imprime todas las instancias EC2 existentes."""
-    resp = ec2.describe_instances()
-    reservations = resp.get("Reservations", [])
-    instances = [inst for reservation in reservations for inst in reservation.get("Instances", [])]
+    """Imprime las instancias EC2 no terminadas."""
+    instances = find_existing_instances(ec2)
 
     if not instances:
-        print("  no hay instancias EC2")
+        print("  no hay instancias EC2 activas")
         return []
 
-    print("  instancias EC2 encontradas:")
+    print("  instancias EC2 activas encontradas:")
     for inst in instances:
         state = inst.get("State", {}).get("Name", "unknown")
         iid = inst.get("InstanceId", "unknown")
-        print(f"    - {iid} | estado={state} | tipo={inst.get('InstanceType', 'unknown')}")
+        instance_name = "sin-name"
+        for tag in inst.get("Tags", []):
+            if tag.get("Key") == "Name":
+                instance_name = tag.get("Value", "sin-name")
+                break
+        print(f"    - {iid} | name={instance_name} | estado={state}")
     return instances
+
+
+def find_project_instances(ec2, instance_name: str = INSTANCE_TAG) -> list[dict]:
+    """Busca instancias EC2 del proyecto por tag Name que no estén terminadas."""
+    resp = ec2.describe_instances(
+        Filters=[
+            {"Name": "tag:Name", "Values": [instance_name]},
+            {"Name": "instance-state-name", "Values": ["pending", "running", "stopping", "stopped"]},
+        ]
+    )
+    reservations = resp.get("Reservations", [])
+    return [inst for reservation in reservations for inst in reservation.get("Instances", [])]
+
+
+def find_existing_instances(ec2) -> list[dict]:
+    """Busca todas las instancias EC2 existentes que no estén terminadas."""
+    resp = ec2.describe_instances(
+        Filters=[
+            {"Name": "instance-state-name", "Values": ["pending", "running", "stopping", "stopped"]},
+        ]
+    )
+    reservations = resp.get("Reservations", [])
+    return [inst for reservation in reservations for inst in reservation.get("Instances", [])]
+
+
+def delete_instances(ec2):
+    """Termina todas las instancias EC2 existentes que no estén terminadas."""
+    instances = find_existing_instances(ec2)
+
+    if not instances:
+        print("  no hay instancias EC2 existentes para borrar")
+        return []
+
+    print("  terminando todas las instancias EC2 existentes:")
+    terminated = []
+    for inst in instances:
+        iid = inst.get("InstanceId")
+        if not iid:
+            continue
+        terminated.append(terminate_instance(ec2, iid))
+    return terminated
 
 
 def terminate_instance(ec2, iid: str):
@@ -191,12 +233,14 @@ def main():
     ec2 = make_client("ec2")
     iam = make_client("iam")
 
+    delete_instances(ec2)
+
     print("1. Key pair")
     create_key_pair(ec2)
 
     print("\n2. Security group de la VPC")
     sg_id, vpc_id = get_security_group_details(ec2, SG_NAME)
-    subnet_id = get_private_subnet_id(ec2, vpc_id, subnet_name="Subnet-App-us-east-1a")
+    subnet_id = get_private_subnet_id(ec2, vpc_id, subnet_name="subnet-App")
 
     print("\n3. Instance profile envuelve el rol ROLE_NAME")
     profile_arn = create_instance_profile(iam, instance_profile_name=INSTANCE_PROFILE, role_name=ROLE_NAME)
@@ -224,9 +268,6 @@ def main():
 
     print("\n7. terminar instancia creada")
     terminate_instance(ec2, iid)
-
-    print("\n8. listar instancias EC2 existentes tras la terminación")
-    list_instances(ec2)
 
 
 
