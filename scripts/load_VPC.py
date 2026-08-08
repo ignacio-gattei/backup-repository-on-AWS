@@ -67,6 +67,16 @@ def create_private_subnet(ec2, vpc_id: str, cidr: str, az: str, name: str) -> st
     return subnet_id
 
 
+def create_security_group(ec2, vpc_id: str, name: str, description: str) -> str:
+    """Crea un security group en la VPC y devuelve su ID."""
+    sg_id = ec2.create_security_group(
+        GroupName=name,
+        Description=description,
+        VpcId=vpc_id,
+    )["GroupId"]
+    print(f"  [+] Security Group '{name}' creado: {sg_id}")
+    return sg_id
+
 
 def setup_route_table(ec2, vpc_id: str, subnet_ids: list, name: str) -> str:
     """Crea una tabla de ruteo privada y la asocia a las subredes del proyecto."""
@@ -97,36 +107,40 @@ def setup_s3_vpc_endpoint(ec2, vpc_id: str, route_table_id: str, region: str):
         print(f"  [!] Error creando VPC Endpoint: {e}")
         return None
 
+def revoke_default_egress(ec2, sg_id: str):
+    """Elimina la regla por defecto que permite todo el tráfico de salida."""
+    try:
+        ec2.revoke_security_group_egress(
+            GroupId=sg_id,
+            IpPermissions=[{"IpProtocol": "-1", "IpRanges": [{"CidrIp": "0.0.0.0/0"}]}]
+        )
+    except ClientError as e:
+        if "InvalidPermission.NotFound" not in str(e):
+            print(f"  [!] Advertencia al revocar egress por defecto: {e}")
 
 
-def setup_security_group_app(ec2, vpc_id: str, on_prem_cidr: str, sg_admin_app: str, GroupName: str) -> tuple:
-    """Crea los Security Groups para la app y la base de datos."""
-    sg_app_id = ec2.create_security_group(
-        GroupName=GroupName,
-        Description="Acceso HTTPS desde la coorporacion",
-        VpcId=vpc_id,
-    )["GroupId"]
-
+def setup_security_group_app(ec2, vpc_id: str, on_prem_cidr: str, sg_admin_id: str, sg_db_id: str, sg_app_id: str, GroupName: str) -> tuple:
+    """Configura el security group de la app """
     ec2.authorize_security_group_ingress(
         GroupId=sg_app_id,
         IpPermissions=[
-
-
-
             {
                 "IpProtocol": "tcp",
                 "FromPort": 443,
                 "ToPort": 443,
-                "IpRanges": [{"CidrIp": on_prem_cidr, "Description": "Tráfico coorporativo"}],
+                "IpRanges": [{"CidrIp": on_prem_cidr, "Description": "Tráfico corporativo"}],
             },
-        {
-                    "IpProtocol": "tcp",
-                    "FromPort": 22,
-                    "ToPort": 22,
-                    "UserIdGroupPairs": [{"GroupId": sg_admin_app, "Description": "SSH exclusivo desde Bastion Host"}],
-                }
-            ],
+            {
+                "IpProtocol": "tcp",
+                "FromPort": 22,
+                "ToPort": 22,
+                "UserIdGroupPairs": [{"GroupId": sg_admin_id, "Description": "SSH exclusivo desde Bastion Host"}],
+            }
+        ],
     )
+
+    revoke_default_egress(ec2, sg_app_id)
+
     ec2.authorize_security_group_egress(
         GroupId=sg_app_id,
         IpPermissions=[
@@ -135,22 +149,23 @@ def setup_security_group_app(ec2, vpc_id: str, on_prem_cidr: str, sg_admin_app: 
                 "FromPort": 443,
                 "ToPort": 443,
                 "IpRanges": [{"CidrIp": on_prem_cidr, "Description": "HTTPS de salida restringido"}],
+            },
+            {
+                "IpProtocol": "tcp",
+                "FromPort": 5432,
+                "ToPort": 5432,
+                # CORRECCIÓN: Referenciar a otro SG usa UserIdGroupPairs, no IpRanges/CidrIp
+                "UserIdGroupPairs": [{"GroupId": sg_db_id, "Description": "Salida a PostgreSQL"}],
             }
         ],
     )
 
-    print(f"  [+] Security Groups creados (App: {sg_app_id} )")
+    print(f"  [+] Reglas configuradas para SG App: {sg_app_id}")
     return sg_app_id
 
 
-def setup_security_group_admin_app(ec2, vpc_id: str, on_prem_cidr: str, GroupName: str) -> tuple:
-    """Crea un security group específico para administración por SSH desde la red corporativa."""
-    sg_admin_id = ec2.create_security_group(
-        GroupName=GroupName,
-        Description="Acceso administrativo por SSH",
-        VpcId=vpc_id,
-    )["GroupId"]
-
+def setup_security_group_admin_app(ec2, vpc_id: str, on_prem_cidr: str, vpc_cidr: str, sg_admin_id: str, GroupName: str) -> tuple:
+    """Configura el security group administrativo """
     ec2.authorize_security_group_ingress(
         GroupId=sg_admin_id,
         IpPermissions=[
@@ -163,27 +178,27 @@ def setup_security_group_admin_app(ec2, vpc_id: str, on_prem_cidr: str, GroupNam
         ],
     )
 
-    print(f"  [+] Security Group de administración creado (App: {sg_admin_id} )")
+    revoke_default_egress(ec2, sg_admin_id)
+    
+    ec2.authorize_security_group_egress(
+        GroupId=sg_admin_id,
+        IpPermissions=[
+            {
+                "IpProtocol": "tcp",
+                "FromPort": 22,
+                "ToPort": 22,
+                "IpRanges": [{"CidrIp": vpc_cidr, "Description": "SSH de salida a recursos internos"}],
+            }
+        ],
+    )
+
+    print(f"  [+] Reglas configuradas para SG Admin: {sg_admin_id}")
     return sg_admin_id
 
 
 
-def setup_security_group_db(ec2, vpc_id: str, sg_app_id: str, sg_admin_app: str, GroupName: str) -> tuple:
-    """Crea el Security Group para la base de datos y permite el acceso desde la EC2."""
-    try:
-        sg_resp = ec2.describe_security_groups(GroupNames=[GroupName])
-        sg_db_id = sg_resp["SecurityGroups"][0]["GroupId"]
-        print(f"  [+] Security Group DB existente encontrado: {sg_db_id}")
-    except ClientError as e:
-        if "InvalidGroup.NotFound" not in str(e):
-            raise
-        sg_db_id = ec2.create_security_group(
-            GroupName=GroupName,
-            Description="Acceso SQL desde la Api de Backup Repository(EC2)",
-            VpcId=vpc_id,
-        )["GroupId"]
-        print(f"  [+] Security Group DB creado: {sg_db_id}")
-
+def setup_security_group_db(ec2, vpc_id: str, sg_app_id: str, sg_admin_id: str, sg_db_id: str, GroupName: str) -> tuple:
+    """Configura el security group de la base de datos usando un ID ya creado."""
     try:
         ec2.authorize_security_group_ingress(
             GroupId=sg_db_id,
@@ -192,13 +207,13 @@ def setup_security_group_db(ec2, vpc_id: str, sg_app_id: str, sg_admin_app: str,
                     "IpProtocol": "tcp",
                     "FromPort": 5432,
                     "ToPort": 5432,
-                    "UserIdGroupPairs": [{"GroupId": sg_app_id, "Description": "Tráfico desde EC2"}],
+                    "UserIdGroupPairs": [{"GroupId": sg_app_id, "Description": "Tráfico desde EC2 App"}],
                 },
                 {
                     "IpProtocol": "tcp",
                     "FromPort": 22,
                     "ToPort": 22,
-                    "UserIdGroupPairs": [{"GroupId": sg_admin_app, "Description": "SSH exclusivo desde Bastion Host"}],
+                    "UserIdGroupPairs": [{"GroupId": sg_admin_id, "Description": "SSH exclusivo desde Bastion Host"}],
                 }
             ],
         )
@@ -206,7 +221,26 @@ def setup_security_group_db(ec2, vpc_id: str, sg_app_id: str, sg_admin_app: str,
         if "already exists" not in str(e).lower() and "duplicate" not in str(e).lower():
             raise
 
-    print(f"  [+] Regla de acceso a PostgreSQL habilitada para {sg_db_id}")
+    revoke_default_egress(ec2, sg_db_id)
+
+    try:
+        # Permitir a la DB salir por HTTPS a los VPC Endpoints (S3) para backups de la DB
+        ec2.authorize_security_group_egress(
+            GroupId=sg_db_id,
+            IpPermissions=[
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 443,
+                    "ToPort": 443,
+                    "IpRanges": [{"CidrIp": "0.0.0.0/0", "Description": "HTTPS hacia S3 Endpoint"}],
+                }
+            ],
+        )
+    except ClientError as e:
+        if "already exists" not in str(e).lower() and "duplicate" not in str(e).lower():
+            raise
+
+    print(f"  [+] Reglas configuradas para SG DB: {sg_db_id}")
     return sg_db_id
 
 
@@ -246,7 +280,7 @@ def cleanup_vpc_configuration(ec2, vpc_name: str = PROJECT_VPC_NAME) -> None:
         groups = ec2.describe_security_groups(
             Filters=[{"Name": "vpc-id", "Values": [vpc_id]}]
         ).get("SecurityGroups", [])
-        group_names = {"sg-api-backup-repository", "sg-db-api-backup-repository"}
+        group_names = {"sg-api-backup-repository", "sg-db-api-backup-repository", "sg-admin-app"}
         for group in groups:
             group_id = group["GroupId"]
             group_name = group.get("GroupName", "")
@@ -319,24 +353,36 @@ if __name__ == "__main__":
 
     # Crea la VPC principal del proyecto.
     vpc_id = create_vpc(ec2, VPC_CIDR, PROJECT_VPC_NAME)
+
     # Crea la subred privada para la aplicación.
     subnet_app = create_private_subnet(ec2, vpc_id, SUBNET_APP_CIDR, AZ, "subnet-App")
+
     # Crea la subred privada para la base de datos.
     subnet_db = create_private_subnet(ec2, vpc_id, SUBNET_DB_CIDR, AZ, "subnet-DB")
+
     # Crea la tabla de ruteo y la asocia a las subredes.
     rt_id = setup_route_table(ec2, vpc_id, [subnet_app, subnet_db], "rt-privada-api-repo-backups")
+
     # Crea el endpoint privado de S3 para la VPC.
     setup_s3_vpc_endpoint(ec2, vpc_id, rt_id, REGION)
-    # Crea el security group administrativo para SSH.
-    sg_admin_app = setup_security_group_admin_app(ec2, vpc_id, SUBNET_ADMIN_APP_CIDR, "sg-admin-app")
-    # Crea y configura el security group de la aplicación.
-    sg_app = setup_security_group_app(ec2, vpc_id, ON_PREM_CIDR, sg_admin_app, "sg-api-backup-repository")
-    # Crea y configura el security group de la base de datos.
-    sg_db = setup_security_group_db(ec2, vpc_id, sg_app, sg_admin_app, "sg-db-api-backup-repository")
+    
+    # Crea los security groups base y luego los configura con reglas específicas.
+    sg_admin_id = create_security_group(ec2, vpc_id, "sg-admin-app", "Acceso administrativo por SSH")
+    sg_app_id = create_security_group(ec2, vpc_id, "sg-api-backup-repository", "Acceso HTTPS desde la corporación")
+    sg_db_id = create_security_group(ec2, vpc_id, "sg-db-api-backup-repository", "Acceso SQL desde la API")
+
+    # Configura el security group administrativo para SSH.
+    setup_security_group_admin_app(ec2, vpc_id, SUBNET_ADMIN_APP_CIDR, VPC_CIDR, sg_admin_id, "sg-admin-app")
+
+    # Configura el security group de la aplicación.
+    setup_security_group_app(ec2, vpc_id, ON_PREM_CIDR, sg_admin_id, sg_db_id, sg_app_id, "sg-api-backup-repository")
+
+    # Configura el security group de la base de datos.
+    setup_security_group_db(ec2, vpc_id, sg_app_id, sg_admin_id, sg_db_id, "sg-db-api-backup-repository")
     
     print("\nConfiguración de la VPC completada con éxito.")
     print("=========================================")
     print(f" ID de la VPC:         {vpc_id}")
     print(f" Subred para la EC2:   {subnet_app}")
-    print(f" Security Group EC2:   {sg_app}")
+    print(f" Security Group EC2:   {sg_app_id}")
     print("=========================================")
