@@ -48,10 +48,25 @@
         "iam:AddRoleToInstanceProfile",
         "iam:RemoveRoleFromInstanceProfile",
         "iam:GetInstanceProfile",
-        "iam:DeleteInstanceProfile",
-        "iam:PassRole"
+        "iam:DeleteInstanceProfile"
       ],
       "Resource": "*"
+    },
+    {
+      "Sid": "IAMPassRoleToEC2Only",
+      "Effect": "Allow",
+      "Action": [
+        "iam:PassRole"
+      ],
+      "Resource": [
+        "arn:aws:iam::*:role/role-app-api-*",
+        "arn:aws:iam::*:role/role-db-api-*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": "ec2.amazonaws.com"
+        }
+      }
     }
   ]
 }

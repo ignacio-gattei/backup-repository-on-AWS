@@ -89,6 +89,23 @@ def setup_route_table(ec2, vpc_id: str, subnet_ids: list, name: str) -> str:
     print(f"  [+] Tabla de ruteo '{name}' asociada a {len(subnet_ids)} subred(es)")
     return rt_id
 
+def setup_vpn_gateway_and_route(ec2, vpc_id: str, route_table_id: str, on_prem_cidr: str):
+    """Crea un VPN Gateway (VGW), lo adjunta a la VPC y enruta el tráfico corporativo hacia él."""
+    try:
+        vgw_id = ec2.create_vpn_gateway(Type="ipsec.1")["VpnGateway"]["VpnGatewayId"]
+        add_name_tag(ec2, vgw_id, "vgw-corp-connection")
+        ec2.attach_vpn_gateway(VpnGatewayId=vgw_id, VpcId=vpc_id)
+        
+        ec2.create_route(
+            RouteTableId=route_table_id,
+            DestinationCidrBlock=on_prem_cidr,
+            GatewayId=vgw_id
+        )
+        print(f"  [+] VPN Gateway '{vgw_id}' creado y enrutado hacia {on_prem_cidr}")
+        return vgw_id
+    except ClientError as e:
+        print(f"  [!] Error creando/enrutando VPN Gateway: {e}")
+        return None
 
 
 def setup_s3_vpc_endpoint(ec2, vpc_id: str, route_table_id: str, region: str):
@@ -148,13 +165,14 @@ def setup_security_group_app(ec2, vpc_id: str, on_prem_cidr: str, sg_admin_id: s
                 "IpProtocol": "tcp",
                 "FromPort": 443,
                 "ToPort": 443,
-                "IpRanges": [{"CidrIp": on_prem_cidr, "Description": "HTTPS de salida restringido"}],
+                "IpRanges": [{"CidrIp": on_prem_cidr, "Description": "HTTPS de salida API REST"},
+                             {"CidrIp": "0.0.0.0/0", "Description": "HTTPS hacia S3 Endpoint"},
+                             ],
             },
             {
                 "IpProtocol": "tcp",
                 "FromPort": 5432,
                 "ToPort": 5432,
-                # CORRECCIÓN: Referenciar a otro SG usa UserIdGroupPairs, no IpRanges/CidrIp
                 "UserIdGroupPairs": [{"GroupId": sg_db_id, "Description": "Salida a PostgreSQL"}],
             }
         ],
@@ -360,12 +378,18 @@ if __name__ == "__main__":
     # Crea la subred privada para la base de datos.
     subnet_db = create_private_subnet(ec2, vpc_id, SUBNET_DB_CIDR, AZ, "subnet-DB")
 
+    # Crea la subred para el Bastion Host.
+    subnet_admin = create_private_subnet(ec2, vpc_id, SUBNET_ADMIN_APP_CIDR, AZ, "subnet-Admin")
+
     # Crea la tabla de ruteo y la asocia a las subredes.
-    rt_id = setup_route_table(ec2, vpc_id, [subnet_app, subnet_db], "rt-privada-api-repo-backups")
+    rt_id = setup_route_table(ec2, vpc_id, [subnet_app, subnet_db, subnet_admin], "rt-privada-api-repo-backups")
 
     # Crea el endpoint privado de S3 para la VPC.
     setup_s3_vpc_endpoint(ec2, vpc_id, rt_id, REGION)
     
+    # Crea un VPN Gateway y configura la ruta para la red corporativa.
+    setup_vpn_gateway_and_route(ec2, vpc_id, rt_id, ON_PREM_CIDR)
+
     # Crea los security groups base y luego los configura con reglas específicas.
     sg_admin_id = create_security_group(ec2, vpc_id, "sg-admin-app", "Acceso administrativo por SSH")
     sg_app_id = create_security_group(ec2, vpc_id, "sg-api-backup-repository", "Acceso HTTPS desde la corporación")
