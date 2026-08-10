@@ -250,6 +250,10 @@ def main() -> None:
     ec2 = make_client("ec2")
     sm = make_client("secretsmanager")
 
+    # Crea o reutiliza el par de claves SSH para la instancia EC2.
+    print("1. Key pair")
+    create_key_pair(ec2)
+
     print("\n Recuperar security group y VPC de la DB")
     sg_id, vpc_id = get_security_group_details(ec2,DB_SECURITY_GROUP_NAME)
 

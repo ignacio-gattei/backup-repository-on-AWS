@@ -20,7 +20,15 @@
         "ec2:CreateTags",
         "ec2:DescribeTags"
       ],
-      "Resource": "*"
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "ec2:ResourceTag/Name": [
+            "ec2-api-backup-repository-01",
+            "db-on-ec2-api-repo-backup"
+          ]
+        }
+      }
     },
     {
       "Sid": "EC2Networking",
@@ -38,7 +46,15 @@
         "ec2:DescribeVpcEndpoints",
         "ec2:DescribeAvailabilityZones"
       ],
-      "Resource": "*"
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "ec2:ResourceTag/Name": [
+            "ec2-api-backup-repository-01",
+            "db-on-ec2-api-repo-backup"
+          ]
+        }
+      }
     },
     {
       "Sid": "IAMInstanceProfileSupport",
@@ -65,6 +81,24 @@
       "Condition": {
         "StringEquals": {
           "iam:PassedToService": "ec2.amazonaws.com"
+        }
+      }
+    },
+    {
+      "Sid": "SSMSessionManager",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:StartSession",
+        "ssm:TerminateSession",
+        "ssm:ResumeSession"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "ec2:ResourceTag/Name": [
+            "ec2-api-backup-repository-01",
+            "db-on-ec2-api-repo-backup"
+          ]
         }
       }
     }
