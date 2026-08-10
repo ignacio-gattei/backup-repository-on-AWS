@@ -21,6 +21,9 @@ from pathlib import Path
 from aws_client import make_client
 from load_IAM import create_instance_profile
 
+ACTIVE_STATES = ["pending", "running", "stopping", "stopped"]
+
+
 
 # Ruta raíz del proyecto para localizar archivos auxiliares.
 ROOT = Path(__file__).parent.parent
@@ -198,15 +201,15 @@ def find_existing_instances(ec2) -> list[dict]:
     return [inst for reservation in reservations for inst in reservation.get("Instances", [])]
 
 
-def delete_instances(ec2):
-    """Termina las instancias EC2 activas antes de crear nuevas."""
-    instances = find_existing_instances(ec2)
+def cleanup_resources(ec2, instance_name: str = INSTANCE_TAG):
+    """Termina solo las instancias EC2 del proyecto para el tag indicado."""
+    instances = find_project_instances(ec2, instance_name)
 
     if not instances:
-        print("  no hay instancias EC2 existentes para borrar")
+        print(f"  no hay instancias EC2 del proyecto con tag '{instance_name}' para borrar")
         return []
 
-    print("  terminando todas las instancias EC2 existentes:")
+    print(f"  terminando instancias EC2 del proyecto con tag '{instance_name}':")
     terminated = []
     for inst in instances:
         iid = inst.get("InstanceId")
@@ -240,6 +243,8 @@ def show_user_data(ec2, iid: str):
         print("  user-data: vacío")
 
 
+
+
 # ── main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -250,7 +255,7 @@ def main():
     iam = make_client("iam")
 
     # Elimina instancias previas para evitar conflictos al volver a ejecutar el script.
-    delete_instances(ec2)
+    cleanup_resources(ec2, instance_name=INSTANCE_TAG)
 
     # Crea o reutiliza el par de claves SSH para la instancia.
     print("1. Key pair")
@@ -290,10 +295,8 @@ def main():
     print("\n6. listar instancias EC2 existentes")
     list_instances(ec2)
 
-    # Termina la instancia creada al finalizar la demostración.
-    print("\n7. terminar instancia creada")
-    terminate_instance(ec2, iid)
-
+   
+  
 
 
 if __name__ == "__main__":

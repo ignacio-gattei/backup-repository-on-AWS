@@ -16,6 +16,7 @@ from pathlib import Path
 from botocore.exceptions import ClientError
 
 from aws_client import make_client
+from load_IAM import create_instance_profile
 
 # Ruta raíz del proyecto para localizar recursos auxiliares.
 ROOT = Path(__file__).parent.parent
@@ -26,6 +27,10 @@ EC2_DIR = ROOT / "ec2"
 KEY_NAME = "key-ec2-db"
 # Etiqueta usada para identificar la instancia EC2 de PostgreSQL.
 DB_INSTANCE_TAG = "db-on-ec2-api-repo-backup"
+# Nombre del rol IAM que se asocia a la instancia.
+ROLE_NAME = "role-db-api-backup-repository"
+# Nombre del instance profile que encapsula el rol IAM.
+INSTANCE_PROFILE = "instance-profile-db-api-backup-repository"
 # Nombre del security group asociado a la base de datos.
 DB_SECURITY_GROUP_NAME = "sg-db-api-backup-repository"
 # Nombre de la subred privada donde se desplegará la base de datos.
@@ -202,6 +207,7 @@ def run_db_instance(ec2, sg_id: str, subnet_id: str) -> str:
         SecurityGroupIds=[sg_id],
         SubnetId=subnet_id,
         UserData=user_data,
+        IamInstanceProfile={"Name": INSTANCE_PROFILE},
         TagSpecifications=[
             {
                 "ResourceType": "instance",
@@ -244,11 +250,65 @@ def create_or_get_db_instance(ec2, sg_id: str, subnet_id: str) -> dict:
     print(f"  la base de datos '{DB_INSTANCE_TAG}' fue creada correctamente")
     return instance
 
+def find_project_instances(ec2, instance_name: str = DB_INSTANCE_TAG) -> list[dict]:
+    """Busca instancias del proyecto por etiqueta Name."""
+    resp = ec2.describe_instances(
+        Filters=[
+            {"Name": "tag:Name", "Values": [instance_name]},
+            {"Name": "instance-state-name", "Values": ["pending", "running", "stopping", "stopped"]},
+        ]
+    )
+    reservations = resp.get("Reservations", [])
+    return [inst for reservation in reservations for inst in reservation.get("Instances", [])]
+
+
+def find_existing_instances(ec2) -> list[dict]:
+    """Busca todas las instancias EC2 activas del entorno."""
+    resp = ec2.describe_instances(
+        Filters=[
+            {"Name": "instance-state-name", "Values": ["pending", "running", "stopping", "stopped"]},
+        ]
+    )
+    reservations = resp.get("Reservations", [])
+    return [inst for reservation in reservations for inst in reservation.get("Instances", [])]
+
+
+
+def cleanup_resources(ec2, instance_name: str = DB_INSTANCE_TAG):
+    """Termina solo las instancias EC2 del proyecto para el tag indicado."""
+    instances = find_project_instances(ec2, instance_name)
+
+    if not instances:
+        print(f"  no hay instancias EC2 del proyecto con tag '{instance_name}' para borrar")
+        return []
+
+    print(f"  terminando instancias EC2 del proyecto con tag '{instance_name}':")
+    terminated = []
+    for inst in instances:
+        iid = inst.get("InstanceId")
+        if not iid:
+            continue
+        terminated.append(terminate_instance(ec2, iid))
+    return terminated
+
+
+def terminate_instance(ec2, iid: str):
+    """Termina una instancia EC2 por su identificador."""
+    resp = ec2.terminate_instances(InstanceIds=[iid])
+    term = resp["TerminatingInstances"][0]
+    print(
+        f"  instancia {iid} marcada para terminar: "
+        f"{term['CurrentState']['Name']} -> {term['PreviousState']['Name']}"
+    )
+    return term
 
 def main() -> None:
 
     ec2 = make_client("ec2")
     sm = make_client("secretsmanager")
+    iam = make_client("iam")
+
+    cleanup_resources(ec2, instance_name=DB_INSTANCE_TAG)
 
     # Crea o reutiliza el par de claves SSH para la instancia EC2.
     print("1. Key pair")
@@ -260,13 +320,18 @@ def main() -> None:
     print("\n Obtener subred dedicada a la DB")
     subnet_id = get_private_subnet_id(ec2, vpc_id, subnet_name=DB_SUBNET_NAME)
     endpoint = get_subnet_endpoint(ec2, subnet_id)
-    password = create_secret(sm, DB_SECRET_NAME, endpoint)
     print(f"  subred de DB: {subnet_id}")
+
+    print("\n Crea el instance profile que permitirá a la instancia asumir el rol de la app.")
+    profile_arn = create_instance_profile(iam, instance_profile_name=INSTANCE_PROFILE, role_name=ROLE_NAME)
+    print(f"   profile ARN: {profile_arn}")
+
+    print("\n Obtenemos la password de la base de datos desde Secrets Manager")
+    password = create_secret(sm, DB_SECRET_NAME, endpoint)
 
     print("\n Crear o recuperar PostgreSQL sobre EC2")
     instance = create_or_get_db_instance(ec2, sg_id, subnet_id)
     
-
     print("\n=== Base de datos lista ===")
     print(f"  Instancia EC2: {instance['InstanceId']}")
     print(f"  Estado: {instance.get('State', {}).get('Name', 'unknown')}")
