@@ -404,10 +404,10 @@ def main():
     attach_policies_to_group(iam, group_infra_admins, [IAM_DIR / "ec2_full_access_policy.json"])
     create_user(iam, "pedro_admin", group_infra_admins)
 
-    # Crea el grupo de desarrolladores y les asigna permisos de lectura.
+    # Crea el grupo de desarrolladores y les asigna permisos de listado en S3.
     print("\n  Perfil: Desarrolladores de app")
     group_dev_apps = create_group(iam, "group_devs_app")
-    attach_policies_to_group(iam, group_dev_apps, [IAM_DIR / "s3_read_policy.json"])
+    attach_policies_to_group(iam, group_dev_apps, [IAM_DIR / "s3_list_only_policy.json"])
     attach_policies_to_group(iam, group_dev_apps, [IAM_DIR / "ec2_read_operations_policy.json"])
     create_user(iam, "nacho_dev", group_dev_apps)
     create_user(iam, "mariano_dev", group_dev_apps)
