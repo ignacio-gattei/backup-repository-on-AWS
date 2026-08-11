@@ -1,5 +1,6 @@
 from pathlib import Path
 import sys
+import json
 
 
 # Permite importar el cliente AWS del proyecto desde scripts/.
@@ -10,6 +11,7 @@ from aws_client import make_client
 
 
 DB_INSTANCE_TAG = "db-on-ec2-api-repo-backup"
+DB_SECRET_NAME = "secret-db-api-repo-backup"
 ACTIVE_STATES = ["pending", "running", "stopping", "stopped"]
 
 
@@ -86,3 +88,17 @@ def test_db_instance_has_iam_instance_profile():
     profile = db_instance.get("IamInstanceProfile")
     assert profile is not None
     assert "instance-profile-db-api-backup-repository" in profile.get("Arn", "")
+
+
+def test_db_secret_can_be_retrieved_with_expected_fields():
+    """El secret de DB debe existir y contener los campos mínimos esperados."""
+    sm = make_client("secretsmanager")
+    secret = sm.get_secret_value(SecretId=DB_SECRET_NAME)
+
+    payload = json.loads(secret["SecretString"])
+
+    assert payload.get("username")
+    assert payload.get("password")
+    assert payload.get("dbname")
+    assert payload.get("host")
+    assert payload.get("port") == 5432
