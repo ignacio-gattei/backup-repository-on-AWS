@@ -9,7 +9,7 @@ yum install -y python3 pip
 pip3 install fastapi uvicorn boto3 python-multipart
 
 
-BUCKET_NAME="course-data-raw"
+BUCKET_NAME="bucket-api"
 
 # 3. Crear el código de la API REST en Python
 cat << 'EOF' > /tmp/app.py
@@ -24,7 +24,7 @@ app = FastAPI(title="S3 Proxy API")
 
 # Inicializar cliente S3 usando el rol de la instancia automáticamente
 s3_client = boto3.client('s3')
-BUCKET = "course-data-raw"
+BUCKET = "bucket-api-file-repo"
 
 @app.post("/upload/{file_name}")
 async def upload_file(file_name: str, file: UploadFile = File(...)):
@@ -58,13 +58,13 @@ async def download_file(file_name: str):
         raise HTTPException(status_code=500, detail=str(e))
 EOF
 
-# 4. Lanzar la API en segundo plano escuchando en el puerto 80
+# 4. Lanzar la API en segundo plano escuchando en el puerto 443
 # Usamos nohup para que el proceso siga vivo después de terminar el user-data
-nohup uvicorn app:app --app-dir /tmp --host 0.0.0.0 --port 80 > /tmp/api.log 2>&1 &
+nohup uvicorn app:app --app-dir /tmp --host 0.0.0.0 --port 443 > /tmp/api.log 2>&1 &
 
 # 5. Esperar un momento y verificar localmente que la API responde
 sleep 3
-curl -sf http://localhost/docs > /dev/null && echo "OK: API REST lista" || echo "FAIL: La API no inició"
+curl -k -sf https://localhost/docs > /dev/null && echo "OK: API REST lista" || echo "FAIL: La API no inició"
 
 #curl -X POST "http://<IP_DE_TU_EC2>/upload/mi-foto.png" \ -F "file=@/ruta/local/de/tu/archivo.png"
 

@@ -431,13 +431,17 @@ def main():
         ],
     )
 
-    # Crea el rol para la base de datos EC2 con permisos específicos de backup sobre S3.
+    # Crea el rol para la base de datos EC2 con permisos específicos de backup sobre S3
+    # y de lectura de su propio secret en Secrets Manager (usado por el user-data).
     print("\n5. Rol con trust policy (EC2 DB) + policies adjuntas")
     create_role(
         iam,
         role_name="role-db-api-backup-repository",
         trust_policy_path="trust_policy.json",
-        attached_policy_sources=[IAM_DIR / "s3_upload_backup_db_policy.json"],
+        attached_policy_sources=[
+            IAM_DIR / "s3_upload_backup_db_policy.json",
+            IAM_DIR / "sm_read_secret_db.json",
+        ],
     )
 
     # Muestra un resumen de los recursos creados para verificar el resultado.

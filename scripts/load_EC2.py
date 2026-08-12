@@ -1,18 +1,19 @@
 """
-Lab 05 — EC2 demo: aprovisionamiento de una instancia con instance profile.
+Provisiona la instancia EC2 de aplicación del proyecto y la deja asociada a un
+instance profile con permisos de acceso a S3.
 
-Cierra el círculo IAM → EC2 → S3:
-- Key pair (par de claves para SSH conceptual)
-- Security group (firewall a nivel de instancia)
-- Instance profile a partir del 'app-role' creado en lab-04
-- run-instances con user-data que baja un archivo de S3
+Qué hace este script:
 
-LocalStack Community: el flujo CLI/API es real (run-instances, describe, attach
-profile). El user-data se almacena pero NO se ejecuta. La instancia es un
-objeto de API, no una VM corriendo.
+- Crea el security group para la subred de la VPC del proyecto;
+- Crea o reutiliza el instance profile del rol de la aplicación;
+- Lanza la instancia EC2 con user-data;
+- Muestra el estado y la configuración final de la máquina.
 
-Uso:
-    python scripts/ec2_demo.py
+Forma de uso:
+    python scripts/load_EC2.py
+
+Nota: en LocalStack, el flujo API de EC2 funciona como un recurso de infraestructura,
+pero el user-data queda almacenado y no se ejecuta realmente como en una VM real.
 """
 
 import time
@@ -289,7 +290,6 @@ def main():
     print(f"  Security group:   {SG_NAME} ({sg_id})")
     print(f"  Instance profile: {INSTANCE_PROFILE}")
     print(f"  Instancia:        {iid}")
-    print(f"  awslocal ec2 terminate-instances --instance-ids {iid}")
 
     # Lista las instancias activas para verificar el resultado.
     print("\n6. listar instancias EC2 existentes")

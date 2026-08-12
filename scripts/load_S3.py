@@ -1,16 +1,17 @@
 """
-Lab 06 — S3 demo: data lake del módulo + cierre IAM → EC2 → S3.
+Crea los buckets S3 del proyecto para guardar archivos de la API y
+backups de la base de datos de la aplicación.
 
-Crea el bucket course-data-lake como fuente de verdad durable del curso:
-  - Block Public Access ON, encryption SSE-S3, versioning desde día 1
-  - Carga Olist + GitHub Archive + processed
-  - Demuestra versioning sobrescribiendo un archivo
-  - Aplica bucket policy que autoriza solo al rol app-role (lab 04)
-  - Asume el rol y descarga un objeto — sin access keys
-  - Genera una presigned URL como demo de acceso temporario
+Qué hace este script:
+- Crea los buckets BUCKET_API_FILE_REPO y BUCKET_DB_BACKUPS;
+- Activa Block Public Access;
+- Habilita encriptación SSE-S3;
+- Activa versionado de objetos;
+- Deja preparados los buckets para ser usados por la aplicación y la base de datos.
 
-Uso:
-    python scripts/s3_demo.py
+Forma de uso:
+    python scripts/load_S3.py
+
 """
 
 import json
