@@ -40,7 +40,7 @@ DB_SECRET_NAME = "secret-db-api-repo-backup"
 # AMI de Ubuntu usada para la instancia de PostgreSQL.
 AMI_ID = "ami-0c02fb55956c7d316"
 # Tipo de instancia EC2 seleccionada para la base de datos.
-INSTANCE_TYPE = "t3.micro"
+INSTANCE_TYPE = "t3.medium"
 # Ruta del script de inicialización que configura PostgreSQL en la instancia.
 USER_DATA_PATH = EC2_DIR / "postgres_user_data.sh"
 
@@ -308,31 +308,31 @@ def main() -> None:
     sm = make_client("secretsmanager")
     iam = make_client("iam")
 
-    cleanup_resources(ec2, instance_name=DB_INSTANCE_TAG)
+    #cleanup_resources(ec2, instance_name=DB_INSTANCE_TAG)
 
     # Crea o reutiliza el par de claves SSH para la instancia EC2.
     print("1. Key pair")
     create_key_pair(ec2)
 
-    print("\n Recuperar security group y VPC de la DB")
+    print("\n2. Recuperar security group y VPC de la DB")
     sg_id, vpc_id = get_security_group_details(ec2,DB_SECURITY_GROUP_NAME)
 
-    print("\n Obtener subred dedicada a la DB")
+    print("\n3. Obtener subred dedicada a la DB")
     subnet_id = get_private_subnet_id(ec2, vpc_id, subnet_name=DB_SUBNET_NAME)
     endpoint = get_subnet_endpoint(ec2, subnet_id)
-    print(f"  subred de DB: {subnet_id}")
+    print(f"\n  subred de DB: {subnet_id}")
 
-    print("\n Crea el instance profile que permitirá a la instancia asumir el rol de la app.")
+    print("\n4. Crea el instance profile que permitirá a la instancia asumir el rol de la app.")
     profile_arn = create_instance_profile(iam, instance_profile_name=INSTANCE_PROFILE, role_name=ROLE_NAME)
-    print(f"   profile ARN: {profile_arn}")
+    print(f"\n   profile ARN: {profile_arn}")
 
-    print("\n Obtenemos la password de la base de datos desde Secrets Manager")
+    print("\n5. Obtenemos la password de la base de datos desde Secrets Manager")
     password = create_secret(sm, DB_SECRET_NAME, endpoint)
 
-    print("\n Crear o recuperar PostgreSQL sobre EC2")
+    print("\n6. Crear o recuperar PostgreSQL sobre EC2")
     instance = create_or_get_db_instance(ec2, sg_id, subnet_id)
     
-    print("\n=== Base de datos lista ===")
+    print("\n=== Base de datos OK ===")
     print(f"  Instancia EC2: {instance['InstanceId']}")
     print(f"  Estado: {instance.get('State', {}).get('Name', 'unknown')}")
     print(f"  Endpoint: {endpoint}")

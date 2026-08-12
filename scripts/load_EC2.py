@@ -43,8 +43,8 @@ INSTANCE_PROFILE = "instance-profile-api-backup-repository"
 INSTANCE_TAG = "ec2-api-backup-repository-01"
 # AMI de Ubuntu usada para el despliegue de la instancia.
 AMI_ID = "ami-0c02fb55956c7d316"
-# Tipo de instancia EC2 seleccionada para la demostración.
-INSTANCE_TYPE = "t3.micro"
+# Tipo de instancia EC2 seleccionada para el proyecto.
+INSTANCE_TYPE = "t3.medium"
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -251,7 +251,7 @@ def show_user_data(ec2, iid: str):
 def main():
     """Orquesta la creación, inspección y limpieza de la instancia EC2 del proyecto."""
 
-    # Inicializa los clientes de EC2 e IAM para trabajar con AWS o LocalStack.
+    # Inicializa los clientes de EC2 e IAM para trabajar con LocalStack.
     ec2 = make_client("ec2")
     iam = make_client("iam")
 
