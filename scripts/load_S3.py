@@ -254,8 +254,8 @@ def main():
     s3 = make_client("s3")
 
     # Elimina los buckets previos para evitar conflictos al reejecutar el script.
-    delete_bucket(s3, BUCKET_API_FILE_REPO)
-    delete_bucket(s3, BUCKET_DB_BACKUPS)
+    #delete_bucket(s3, BUCKET_API_FILE_REPO)
+    #delete_bucket(s3, BUCKET_DB_BACKUPS)
 
     # Crea y hardeniza el bucket destinado a archivos de la API y el repositorio.
     print("\n=== Bucket para guardar archivos backup de la coorporacion  ===")
