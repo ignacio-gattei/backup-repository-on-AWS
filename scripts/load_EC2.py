@@ -143,6 +143,28 @@ def run_instance(ec2, sg_id: str, subnet_id: str):
     return iid
 
 
+def find_existing_instance(ec2, instance_name: str = INSTANCE_TAG) -> dict | None:
+    """Busca una instancia EC2 existente del proyecto por etiqueta Name."""
+    instances = find_project_instances(ec2, instance_name)
+    if not instances:
+        return None
+
+    instance = instances[0]
+    print(f"  instancia EC2 existente encontrada: {instance['InstanceId']} ({instance['State']['Name']})")
+    return instance
+
+
+def create_or_get_instance(ec2, sg_id: str, subnet_id: str) -> str:
+    """Crea la instancia EC2 del proyecto si no existe o reutiliza la actual."""
+    instance = find_existing_instance(ec2, INSTANCE_TAG)
+    if instance:
+        print(f"  la instancia '{INSTANCE_TAG}' ya existe")
+        return instance["InstanceId"]
+
+    print(f"  creando instancia EC2 '{INSTANCE_TAG}'...")
+    return run_instance(ec2, sg_id, subnet_id)
+
+
 def describe_instance(ec2, iid: str):
     """Muestra el estado y la configuración básica de la instancia."""
     # Pequeña espera para que LocalStack registre el estado
@@ -256,7 +278,7 @@ def main():
     iam = make_client("iam")
 
     # Elimina instancias previas para evitar conflictos al volver a ejecutar el script.
-    cleanup_resources(ec2, instance_name=INSTANCE_TAG)
+    #cleanup_resources(ec2, instance_name=INSTANCE_TAG)
 
     # Crea o reutiliza el par de claves SSH para la instancia.
     print("1. Key pair")
@@ -272,9 +294,9 @@ def main():
     profile_arn = create_instance_profile(iam, instance_profile_name=INSTANCE_PROFILE, role_name=ROLE_NAME)
     print(f"   profile ARN: {profile_arn}")
 
-    # Lanza la instancia EC2 con user-data e instance profile.
+    # Crea la instancia EC2 con user-data e instance profile, o reutiliza la existente.
     print("\n4. run-instance con user-data + profile")
-    iid = run_instance(ec2, sg_id, subnet_id)
+    iid = create_or_get_instance(ec2, sg_id, subnet_id)
 
     # Muestra el estado y los datos básicos de la instancia recién creada.
     print("\n5. describe-instances — ver lo que quedó aprovisionado")
@@ -285,14 +307,14 @@ def main():
     show_user_data(ec2, iid)
 
     # Resume los valores principales del despliegue.
-    print("\n=== Resumen ===")
+    print("\n=== Instancia EC2 para API Backup OK ===")
     print(f"  Key pair:         {KEY_NAME}")
     print(f"  Security group:   {SG_NAME} ({sg_id})")
     print(f"  Instance profile: {INSTANCE_PROFILE}")
     print(f"  Instancia:        {iid}")
 
     # Lista las instancias activas para verificar el resultado.
-    print("\n6. listar instancias EC2 existentes")
+    print("\nInstancias EC2 existentes")
     list_instances(ec2)
 
    
