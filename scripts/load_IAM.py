@@ -95,10 +95,9 @@ def create_user(iam,username, group: str):
     iam.add_user_to_group(GroupName=group, UserName=username)
     print(f"  usuario '{username}' agregado al grupo '{group}'")
 
-    # access key (equivalente a "llave de larga duración" — lo que queremos evitar en prod)
     try:
         key = iam.create_access_key(UserName=username)["AccessKey"]
-        print(f"  access key creada: {key['AccessKeyId']} (larga duración)")
+        print(f"  access key creada: {key['AccessKeyId']} ")
     except ClientError as e:
         if "LimitExceeded" in str(e):
             print("  access key ya existe para este usuario")
@@ -242,7 +241,7 @@ def inspect_groups(iam):
     print("\n=== Groups ===")
     for g in iam.list_groups().get("Groups", []):
         name = g["GroupName"]
-        print(f"- Group: {name}")
+        print(f"\n- Group: {name}")
         # members
         try:
             members = iam.get_group(GroupName=name).get("Users", [])
@@ -254,13 +253,12 @@ def inspect_groups(iam):
         for a in attached:
             print(f"  Attached managed policy: {a['PolicyName']} ({a['PolicyArn']})")
             doc = get_managed_policy_document(iam, a["PolicyArn"])
-            if doc:
-                print(f"    S3-related: {policy_has_s3(doc)}")
+  
 
         inline = iam.list_group_policies(GroupName=name).get("PolicyNames", [])
         for pname in inline:
             doc = iam.get_group_policy(GroupName=name, PolicyName=pname)["PolicyDocument"]
-            print(f"  Inline policy: {pname} - S3-related: {policy_has_s3(doc)}")
+            print(f"  Inline policy: {pname} ")
 
 
 def inspect_roles(iam):
@@ -268,29 +266,27 @@ def inspect_roles(iam):
     print("\n=== Roles ===")
     for r in iam.list_roles().get("Roles", []):
         name = r["RoleName"]
-        print(f"- Role: {name}")
+        print(f"\n- Role: {name}")
 
         inline_names = iam.list_role_policies(RoleName=name).get("PolicyNames", [])
         for pname in inline_names:
             doc = iam.get_role_policy(RoleName=name, PolicyName=pname)["PolicyDocument"]
-            print(f"  Inline policy: {pname} - S3-related: {policy_has_s3(doc)}")
+            print(f"  Inline policy: {pname} ")
 
         attached = iam.list_attached_role_policies(RoleName=name).get("AttachedPolicies", [])
         for a in attached:
             print(f"  Attached managed policy: {a['PolicyName']} ({a['PolicyArn']})")
             doc = get_managed_policy_document(iam, a["PolicyArn"])
-            if doc:
-                print(f"    S3-related: {policy_has_s3(doc)}")
+
 
 
 def inspect_policies(iam):
     """Muestra las políticas administradas locales del entorno."""
-    print("\n=== Managed policies (Local scope) ===")
+    print("\n=== Policies ===")
     for p in iam.list_policies(Scope="Local").get("Policies", []):
         print(f"- {p['PolicyName']} ({p['Arn']})")
         doc = get_managed_policy_document(iam, p["Arn"])
-        if doc:
-            print(f"  S3-related: {policy_has_s3(doc)}")
+    
 
 
 def cleanup_resources(iam):
@@ -394,18 +390,18 @@ def main():
     iam = make_client("iam")
 
     # Limpia recursos IAM previos antes de crear los nuevos.
-    cleanup_resources(iam)
+    #cleanup_resources(iam)
 
     # Crea el grupo de administradores y les asigna políticas de acceso amplio.
-    print("\n2. Grupo + policies")
-    print("\n Perfil: Administradores Cloud")
+    print("\n1. Grupo + policies")
+    print("\n1.1 Perfil: Administradores Cloud\n")
     group_infra_admins = create_group(iam, "group_infra_admins")
     attach_policies_to_group(iam, group_infra_admins, [IAM_DIR / "s3_admin_policy.json"])
     attach_policies_to_group(iam, group_infra_admins, [IAM_DIR / "ec2_full_access_policy.json"])
     create_user(iam, "pedro_admin", group_infra_admins)
 
     # Crea el grupo de desarrolladores y les asigna permisos de listado en S3.
-    print("\n  Perfil: Desarrolladores de app")
+    print("\n1.2  Perfil: Desarrolladores de app\n")
     group_dev_apps = create_group(iam, "group_devs_app")
     attach_policies_to_group(iam, group_dev_apps, [IAM_DIR / "s3_list_only_policy.json"])
     attach_policies_to_group(iam, group_dev_apps, [IAM_DIR / "ec2_read_operations_policy.json"])
@@ -413,13 +409,13 @@ def main():
     create_user(iam, "mariano_dev", group_dev_apps)
 
     # Crea el grupo de DBAs con permisos de administración sobre la base de datos.
-    print("\n Perfil: DBAs")
+    print("\n1.3 Perfil: DBAs\n")
     group_dba = create_group(iam, "group_dba")
     attach_policies_to_group(iam, group_dba, [IAM_DIR / "db_on_ec2_admin_policy.json"])
     create_user(iam, "pedro_dba", group_dba)
 
     # Crea el rol para la aplicación EC2 con permisos de lectura/escritura sobre S3 y secretos.
-    print("\n4. Rol con trust policy (EC2 app) + policies adjuntas")
+    print("\n2. Rol con trust policy (EC2 app) + policies adjuntas\n")
     create_role(
         iam,
         role_name="role-app-api-backup-repository",
@@ -433,7 +429,7 @@ def main():
 
     # Crea el rol para la base de datos EC2 con permisos específicos de backup sobre S3
     # y de lectura de su propio secret en Secrets Manager (usado por el user-data).
-    print("\n5. Rol con trust policy (EC2 DB) + policies adjuntas")
+    print("\n3. Rol con trust policy (EC2 DB) + policies adjuntas")
     create_role(
         iam,
         role_name="role-db-api-backup-repository",
