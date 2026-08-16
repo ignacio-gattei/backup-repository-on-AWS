@@ -73,6 +73,16 @@ Este script se encargará de levantar en el orden correcto todos los componentes
 python scripts/load_infraestructure.py
 ```
 
+Si se desea desplegar la infraestructura de forma modular, la ejecución debe seguir este orden:
+
+```bash
+python scripts/load_VPC.py
+python scripts/load_IAM.py
+python scripts/load_S3.py
+python scripts/load_EC2.py
+python scripts/load_DB.py
+```
+
 ## Ejecución de Pruebas
 
 El proyecto incluye un conjunto de pruebas automatizadas con **pytest**. Para ejecutar las pruebas y validar la correcta configuración de los componentes, corre el siguiente comando en la raíz del repositorio:
