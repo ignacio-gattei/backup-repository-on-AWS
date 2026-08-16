@@ -523,7 +523,7 @@ if __name__ == "__main__":
     ec2 = make_ec2_client()
 
     # Limpia recursos previos de la VPC antes de crear la infraestructura nueva.
-    cleanup_vpc_configuration(ec2, PROJECT_VPC_NAME)
+    #cleanup_vpc_configuration(ec2, PROJECT_VPC_NAME)
 
     print("Configurando VPC...\n")
 
