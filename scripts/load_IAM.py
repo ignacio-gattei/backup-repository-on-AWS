@@ -81,28 +81,43 @@ def attach_policies_to_group(iam, group: str, policy_sources) -> list:
     return attached_arns
 
 
-def create_user(iam,username, group: str):
-    """Crea un usuario IAM, lo agrega a un grupo y genera una access key."""
+
+def create_user(iam, username, group: str):
+    """Crea un usuario IAM, lo agrega a un grupo y genera una access key de forma idempotente."""
+    
+    # 1. Creación del usuario
     try:
         iam.create_user(UserName=username)
         print(f"  usuario '{username}' creado")
     except ClientError as e:
-        if _already_exists(e):
+        if e.response['Error']['Code'] == 'EntityAlreadyExists': # Reemplaza tu _already_exists
             print(f"  usuario '{username}' ya existe")
         else:
             raise
 
-    iam.add_user_to_group(GroupName=group, UserName=username)
-    print(f"  usuario '{username}' agregado al grupo '{group}'")
-
+    # 2. Asignación al grupo
+    # IAM.add_user_to_group es idempotente por defecto en AWS (no lanza error si ya pertenece al grupo)
     try:
-        key = iam.create_access_key(UserName=username)["AccessKey"]
-        print(f"  access key creada: {key['AccessKeyId']} ")
+        iam.add_user_to_group(GroupName=group, UserName=username)
+        print(f"  usuario '{username}' agregado (o ya pertenecía) al grupo '{group}'")
     except ClientError as e:
-        if "LimitExceeded" in str(e):
-            print("  access key ya existe para este usuario")
+        raise
+
+    # 3. Creación de Access Key
+    try:
+        # Verificamos si el usuario ya tiene al menos una access key
+        existing_keys = iam.list_access_keys(UserName=username).get('AccessKeyMetadata', [])
+        
+        if existing_keys:
+            print(f"  access key ya existe para este usuario.")
+            # Nota: AWS no permite recuperar el 'SecretAccessKey' de una llave existente.
         else:
-            raise
+            key = iam.create_access_key(UserName=username)["AccessKey"]
+            print(f"  access key creada: {key['AccessKeyId']}")
+            # Aquí es el único momento donde puedes acceder a key['SecretAccessKey']
+            
+    except ClientError as e:
+        raise
 
     return username
 
