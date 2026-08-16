@@ -59,13 +59,16 @@ Como parte integral del proyecto, en este repositorio se incluye la siguiente do
 
 El proyecto está preparado para ejecutarse de manera automatizada y cuenta con configuración nativa para correr en **GitHub Codespaces**.
 
+### Paso 1: Crear el Codespace
+1. Ve a la página principal de este repositorio en GitHub.
+2. Haz clic en el botón verde **`<> Code`**.
+3. Selecciona la pestaña **`Codespaces`**.
+4. Haz clic en el botón **`Create codespace on main`**.
 
-Para preparar el entorno con todas las dependencias necesarias de manera automática, ejecuta el siguiente comando:
-```bash
-docker compose up -d
-```
 
-Una vez levantado el entorno, para desplegar la infraestructura en tu propia cuenta de AWS, ejecuta el script orquestador principal. Este script se encargará de levantar en el orden correcto todos los componentes necesarios (VPC, IAM, S3, EC2, DB):
+### Paso 2: Desplegar infraestructura
+Una vez levantado el entorno, para desplegar la infraestructura en tu propia cuenta de AWS, ejecuta el script orquestador principal. 
+Este script se encargará de levantar en el orden correcto todos los componentes necesarios (VPC, IAM, S3, EC2, DB):
 ```bash
 python scripts/load_infraestructure.py
 ```
