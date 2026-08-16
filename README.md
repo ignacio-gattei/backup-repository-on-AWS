@@ -26,7 +26,7 @@ La empresa de seguros cuenta con la sede de operaciones en Buenos Aires, Argenti
 
 Anteriormente, los empleados debían realizar la carga de estos archivos de manera manual en repositorios en la nube (como Google Drive). 
 
-Esta API automatiza completamente ese proceso, permitiendo que la aplicación de escritorio realice el backup de los archivos generados directamente hacia una infraestructura en la nube, eliminando la carga manual, mitigando el riesgo de errores u olvidos y garantizando la persistencia y seguridad de la información crítica de la empresa aseguradora.
+Esta API automatiza completamente ese proceso, permitiendo que la aplicación de escritorio realice el backup de los archivos generados directamente hacia una infraestructura en la nube, eliminando la carga manual, mitigando el riesgo de errores u olvidos y garantizando la persistencia y seguridad de la información crítica de la corporacion.
 
 ## Despliegue de Infraestructura (AWS & Boto3)
 
@@ -34,18 +34,18 @@ Para la implementación del proyecto, se desarrollaron **scripts en Python utili
 
 Entre los componentes de AWS que se integraron para soportar esta arquitectura se encuentran:
 - **VPC y Networking**: Configuración de red (subnets, internet gateways, tablas de ruteo, security groups) para un entorno aislado y seguro.
-- **Amazon S3**: Repositorio de almacenamiento altamente duradero para albergar todos los tipos de archivos (PDFs, imágenes, multimedia, etc.).
-- **Componentes de Cómputo (EC2)**: Infraestructura destinada a alojar y ejecutar la API de resguardo.
-- **Base de Datos (SQL Postgress)**: Infraestructura aprovisionada para la persistencia de los registros y metadatos operativos.
+- **Amazon S3**: Repositorio de almacenamiento para almacenar todos los tipos de archivos (PDFs, imágenes, multimedia, etc.).
+- **Componentes de Cómputo (EC2)**: Infraestructura destinada a alojar y ejecutar la API.
+- **Base de Datos (SQL Postgress)**: Infraestructura aprovisionada para la persistencia de los registros y metadatos de archivos.
 - **AWS IAM**: Gestión estricta de roles y políticas de seguridad para la interacción entre los servicios.
 
 ## Alcance y Siguientes Etapas
 
 El alcance de este proyecto se circunscribe **exclusivamente al despliegue y aprovisionamiento de la infraestructura** tecnológica en AWS.
 
-Quedan definidos para una etapa posterior del proyecto:
+Quedan para una etapa posterior del proyecto:
 1. La implementación y programación de la lógica de la aplicación (App) de la API.
-2. El diseño y modelado de los datos en la base de datos que necesita la aplicación para su funcionamiento integral.
+2. El diseño y modelado de los datos en la base de datos que necesita la aplicación para su funcionamiento.
 
 ## Documentación
 
