@@ -1,96 +1,79 @@
-# backup-repository-on-AWS
+# API File Backup Repository on AWS
 
 Proyecto integrador del módulo Cloud Computing (ITBA).
 
-> **Integrantes:** _completar con los miembros del grupo_
+> **Integrantes:** Ignacio Gattei
 
-Arquitectura base: VPC + IAM + S3 + Cómputo + Base de datos, todo en LocalStack/Docker (local-first), con AWS real como referencia.
+## Descripción del Proyecto
 
----
+Este proyecto consiste en una API desarrollada específicamente para una corporación del sector de seguros. La misma fue diseñada para integrarse con una aplicación de escritorio existente en la compañía SIS (Sistema Integral de Seguros).
 
-## Cómo arrancar
+La aplicación de escritorio genera diariamente una serie de archivos que requieren ser resguardados de forma segura. Por políticas de la empresa, todos los archivos generados deben ser almacenados en un repositorio en la nube.
 
-### Opción A — GitHub "Use this template" (recomendado)
+Los archivos que se deben resguardar son de diversos tipos, con un tamaño que varía entre 100 KB y 50 MB cada uno. En promedio, se generan unos 1200 archivos al día. Entre los archivos a resguardar se encuentran:
 
-1. Click en **"Use this template"** arriba a la derecha de este repo
-2. Elegí nombre y dueño del repo nuevo (puede ser una organización del grupo)
-3. Cloná el repo nuevo a tu máquina o abrilo en Codespaces
-4. Corré `bin/init.sh "Tu Proyecto"` para personalizar README y docs
-5. Listo: arrancá agregando servicios al `compose.yaml`
+- Identidad y Propiedad (DNI, cédulas, títulos): .PDF, .JPG, .PNG
+- Legales y Judiciales (Cartas documento, actas): .PDF, .DOCX
+- Multimedia (Llamadas al call center, videos de choque): .MP3, .WAV, .MP4
+- Facturación (Talleres, grúas, clínicas): .PDF, .XML
+- Médicos (Historias clínicas, formularios de salud): .PDF, .DOCX
+- Comunicaciones (Emails de reclamos o aprobaciones): .MSG, .EML, .PST
+Pagos (Autorizaciones de débito automático): .PDF, .JPG
 
-### Opción B — Cookiecutter / script local
+La empresa de seguros cuenta con la sede de operaciones en Buenos Aires, Argentina.
 
-Si preferís hacerlo desde la CLI sin pasar por la UI de GitHub:
+## Problema y Solución
+
+Anteriormente, los empleados debían realizar la carga de estos archivos de manera manual en repositorios en la nube (como Google Drive). 
+
+Esta API automatiza completamente ese proceso, permitiendo que la aplicación de escritorio realice el backup de los archivos generados directamente hacia una infraestructura en la nube, eliminando la carga manual, mitigando el riesgo de errores u olvidos y garantizando la persistencia y seguridad de la información crítica de la empresa aseguradora.
+
+## Despliegue de Infraestructura (AWS & Boto3)
+
+Para la implementación del proyecto, se desarrollaron **scripts en Python utilizando la librería Boto3** (SDK de AWS). Estos scripts se encargan de desplegar y aprovisionar de manera automatizada toda la infraestructura en la nube que requiere la API.
+
+Entre los componentes de AWS que se integraron para soportar esta arquitectura se encuentran:
+- **VPC y Networking**: Configuración de red (subnets, internet gateways, tablas de ruteo, security groups) para un entorno aislado y seguro.
+- **Amazon S3**: Repositorio de almacenamiento altamente duradero para albergar todos los tipos de archivos (PDFs, imágenes, multimedia, etc.).
+- **Componentes de Cómputo (EC2)**: Infraestructura destinada a alojar y ejecutar la API de resguardo.
+- **Base de Datos (SQL Postgress)**: Infraestructura aprovisionada para la persistencia de los registros y metadatos operativos.
+- **AWS IAM**: Gestión estricta de roles y políticas de seguridad para la interacción entre los servicios.
+
+## Alcance y Siguientes Etapas
+
+El alcance de este proyecto se circunscribe **exclusivamente al despliegue y aprovisionamiento de la infraestructura** tecnológica en AWS.
+
+Quedan definidos para una etapa posterior del proyecto:
+1. La implementación y programación de la lógica de la aplicación (App) de la API.
+2. El diseño y modelado de los datos en la base de datos que necesita la aplicación para su funcionamiento integral.
+
+## Documentación
+
+Como parte integral del proyecto, en este repositorio se incluye la siguiente documentación:
+
+- **Estimación de Costos**: Un análisis y proyección detallada de los costos mensuales operativos de la infraestructura desplegada en AWS.
+- **Planificación de Implementación**: Un diagrama de Gantt que detalla el cronograma y las fases para la implementación de la infraestructura.
+- **Diagrama de Arquitectura**: Un esquema visual detallado de la arquitectura del proyecto, mostrando los componentes de AWS y cómo interactúan entre sí.
+
+## Cómo Ejecutar el Proyecto
+
+El proyecto está preparado para ejecutarse de manera automatizada y cuenta con configuración nativa para correr en **GitHub Codespaces**.
+
+
+Para preparar el entorno con todas las dependencias necesarias de manera automática, ejecuta el siguiente comando:
+```bash
+docker compose up -d
+```
+
+Una vez levantado el entorno, para desplegar la infraestructura en tu propia cuenta de AWS, ejecuta el script orquestador principal. Este script se encargará de levantar en el orden correcto todos los componentes necesarios (VPC, IAM, S3, EC2, DB):
+```bash
+python scripts/load_infraestructure.py
+```
+
+## Ejecución de Pruebas
+
+El proyecto incluye un conjunto de pruebas automatizadas con **pytest**. Para ejecutar las pruebas y validar la correcta configuración de los componentes, corre el siguiente comando en la raíz del repositorio:
 
 ```bash
-# Cloná el starter
-git clone https://github.com/<owner>/proyecto-final-starter.git mi-proyecto
-cd mi-proyecto
-
-# Borrá la historia del template
-rm -rf .git
-
-# Personalizá
-./bin/init.sh "Mi Proyecto"
-
-# Arrancá un repo nuevo
-git init && git add . && git commit -m "init: proyecto final desde starter"
-
-# (opcional) creá el repo en GitHub
-gh repo create mi-proyecto --source=. --private --push
+pytest
 ```
-
----
-
-## Qué incluye el starter
-
-Solo estructura — sin servicios pre-armados. Vos elegís qué levantar y dónde.
-
-```
-.
-├── .devcontainer/         # Codespaces listo: postgres-client, aws-cli, docker-in-docker
-├── compose.yaml           # Esqueleto vacío (services: {})
-├── docs/
-│   ├── architecture.md    # Plantilla con tablas vacías
-│   └── decisions.md       # Formato ADR
-├── iam/
-│   ├── trust_policy.json  # Único molde reutilizable (EC2 assume role)
-│   └── README.md
-├── scripts/
-│   └── README.md          # Guía de convenciones (idempotencia, no secretos)
-├── iac/
-│   ├── main.tf            # Donde van tus recursos
-│   ├── variables.tf       # project_name, environment, region
-│   ├── outputs.tf
-│   └── providers/
-│       ├── aws-local.tf.example     # AWS contra LocalStack
-│       ├── azure-local.tf.example   # Azure contra Azurite
-│       └── gcp-local.tf.example     # GCP contra emuladores
-├── requirements.txt       # boto3, psycopg2, awscli-local, pytest
-├── bin/init.sh            # Personaliza el starter con tu proyecto
-└── .gitignore
-```
-
-Mirar `iac/README.md` para elegir provider local.
-
----
-
-## Checklist del proyecto
-
-Al final del módulo, este repo debería tener:
-
-- [ ] `docs/architecture.md` con tu diagrama y componentes
-- [ ] `docs/decisions.md` con al menos 5 decisiones documentadas (ADR)
-- [ ] `iam/` con los JSON de tu solución (trust + policies + bucket policy)
-- [ ] `scripts/` con al menos 3 demos automatizados (idempotentes)
-- [ ] `compose.yaml` con los servicios que tu arquitectura usa
-- [ ] Tests unitarios (`pytest` pasa)
-- [ ] README explicando cómo correrlo end-to-end
-
----
-
-## Referencias del curso
-
-- Repo de demos por clase: [cloud-foundations-lab](https://github.com/maxflorentin/cloud-foundations-lab)
-- AWS Academy Cloud Architecting (Spanish LATAM): los módulos cubren la teoría
-- `cloud-foundations-lab` tiene labs 04 (IAM), 05 (EC2), 06 (S3), 07 (VPC), 08 (RDS) — usar como referencia

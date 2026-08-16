@@ -27,6 +27,13 @@ Todo corre sobre LocalStack/Docker (local-first) con AWS real como referencia, o
 
 ![Diagrama de Arquitectura](diagrama_arquitectura.png)
 
+##
+ Región (AWS Region)
+
+Para el despliegue de esta infraestructura se ha seleccionado la región **US East (N. Virginia - us-east-1)**. 
+
+La decisión se fundamenta principalmente en la optimización de costos. N. Virginia suele ofrecer los precios más competitivos dentro del ecosistema de AWS tanto para recursos de cómputo como de almacenamiento. Dado que el objetivo primordial del sistema es el resguardo (backup) masivo y la eventual recuperación de archivos, la latencia de red no es importante. Se descarto la seleccion de regiones mas cercanas como **Sao Paulo** dado que la latencia no es un factor crítico en la operación y los costos en US East son significativamente menores.
+
 ## Componentes
 
 
