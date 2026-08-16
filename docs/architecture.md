@@ -2,6 +2,8 @@
 
 Este documento define la arquitectura de una API corporativa interna, diseñada para transferir archivos a la nube (Amazon S3) y garantizar el respaldo (backup) de la información generada en el entorno on-premise.
 
+![Diagrama de Arquitectura](diagrama_arquitectura.png)
+
 - **API (EC2)** — API interna corporativa desplegada en una instancia EC2 sin IP pública, responsable de recibir archivos y subirlos a S3. Se optó por EC2 para garantizar una comunicación directa, privada y segura con el bucket de S3, aislando el tráfico de internet. Adicionalmente, la arquitectura demanda ejecución continua con tráfico sostenido en horario laboral y control total del entorno. Se dimensionó con una instancia t3.medium, logrando soportar el volumen de transferencia esperado.
 - **S3** — Dos buckets: Uno almacena los archivos subidos por la API y
   otro guarda los backups de la base de datos. Se eligió S3 porque provee una plataforma de alta disponibilidad y durabilidad para almacenar la información.
@@ -25,10 +27,9 @@ Este documento define la arquitectura de una API corporativa interna, diseñada 
 Todo corre sobre LocalStack/Docker (local-first) con AWS real como referencia, orquestado desde
 `scripts/` (boto3) .
 
-![Diagrama de Arquitectura](diagrama_arquitectura.png)
 
-##
- Región (AWS Region)
+
+## Región (AWS Region)
 
 Para el despliegue de esta infraestructura se ha seleccionado la región **US East (N. Virginia - us-east-1)**. 
 

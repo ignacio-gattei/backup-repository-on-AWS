@@ -51,9 +51,12 @@ Quedan para una etapa posterior del proyecto:
 
 Como parte integral del proyecto, en este repositorio se incluye la siguiente documentación:
 
-- **Estimación de Costos**: Un análisis y proyección detallada de los costos mensuales operativos de la infraestructura desplegada en AWS.
-- **Planificación de Implementación**: Un diagrama de Gantt que detalla el cronograma y las fases para la implementación de la infraestructura.
 - **Diagrama de Arquitectura**: Un esquema visual detallado de la arquitectura del proyecto, mostrando los componentes de AWS y cómo interactúan entre sí.
+[Link](/docs/architecture.md)
+- **Planificación de Implementación**: Un diagrama de Gantt que detalla el cronograma y las fases para la implementación de la infraestructura.
+[Link](/docs/plan.md)
+- **Estimación de Costos**: Un análisis y proyección detallada de los costos mensuales operativos de la infraestructura desplegada en AWS.
+[Link](/docs/budget.md)
 
 ## Cómo Ejecutar el Proyecto
 
